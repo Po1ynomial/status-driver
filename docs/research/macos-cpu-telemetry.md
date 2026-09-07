@@ -11,6 +11,7 @@ Can Status Driver read normalized whole-system CPU activity on the owner's Mac w
 - Utilization requires two snapshots and uses non-idle tick deltas divided by all tick deltas.
 - The call succeeded from an ordinary Swift script without a permission prompt or entitlement.
 - The counters use `natural_t`, so implementation should use wrapping subtraction.
+- During a 60-second integrated app run, `host_statistics` always returned `KERN_SUCCESS` but often repeated an unchanged snapshot while the GUI was occluded. These zero-delta successes must not be presented as read failures.
 
 ## Evidence
 
@@ -35,7 +36,9 @@ result=KERN_SUCCESS deltaTicks=201 utilization=0.03980099502487562
 
 ## Confidence and limitations
 
-Confidence is high for API availability and unprivileged access on the target machine. The probe only establishes current-host behavior. It did not test sandboxed distribution, older macOS releases, counter rollover, sustained sampling overhead, or sleep and wake behavior.
+Confidence is high for API availability and unprivileged access on the target machine. A standalone 30-second probe produced 200 successful reads with no repeated snapshots, while the integrated occluded GUI run produced many zero-delta successes and no kernel failures. The difference may involve GUI scheduling or App Nap and does not affect the chosen stale-value behavior.
+
+The probes only establish current-host behavior. They did not test sandboxed distribution, older macOS releases, counter rollover, or sleep and wake behavior.
 
 ## Relevance
 

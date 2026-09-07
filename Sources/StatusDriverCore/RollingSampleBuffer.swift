@@ -5,6 +5,28 @@ package struct RollingSampleBuffer {
 
     package init() {}
 
+    package mutating func prefill(
+        endingAt timestamp: TimeInterval,
+        value: Double,
+        interval: TimeInterval,
+        duration: TimeInterval
+    ) {
+        precondition(interval > 0)
+        precondition(duration >= 0)
+
+        samples.removeAll(keepingCapacity: true)
+        let segmentCount = max(1, Int(ceil(duration / interval)))
+        let startTimestamp = timestamp - Double(segmentCount) * interval
+        for index in 0...segmentCount {
+            append(
+                MetricSample(
+                    timestamp: startTimestamp + Double(index) * interval,
+                    value: value
+                )
+            )
+        }
+    }
+
     package mutating func append(_ sample: MetricSample) {
         precondition(
             samples.last.map { sample.timestamp > $0.timestamp } ?? true,

@@ -105,6 +105,7 @@ package actor CPUMetricProducer: MetricReadingProducer {
     private let reader: any CPUTickReader
     private var calculator = CPUUtilizationCalculator()
     private var filter: ExponentialMovingAverage
+    private var hasValidValue = false
     private var lastValidValue = 0.5
 
     package init(
@@ -119,9 +120,10 @@ package actor CPUMetricProducer: MetricReadingProducer {
         switch await reader.readTicks() {
         case let .success(ticks):
             guard let utilization = calculator.consume(ticks) else {
-                return unavailableReading(at: timestamp)
+                return readingWithoutNewTicks(at: timestamp)
             }
             lastValidValue = filter.update(value: utilization, at: timestamp)
+            hasValidValue = true
             return MetricReading(
                 timestamp: timestamp,
                 value: lastValidValue,
@@ -131,6 +133,15 @@ package actor CPUMetricProducer: MetricReadingProducer {
         case .failure:
             return unavailableReading(at: timestamp)
         }
+    }
+
+    private func readingWithoutNewTicks(at timestamp: TimeInterval) -> MetricReading {
+        MetricReading(
+            timestamp: timestamp,
+            value: lastValidValue,
+            source: .cpu,
+            availability: hasValidValue ? .available : .unavailable
+        )
     }
 
     private func unavailableReading(at timestamp: TimeInterval) -> MetricReading {

@@ -26,7 +26,7 @@ For each pair of successful reads:
 2. Add user, system, and nice deltas as busy ticks.
 3. Add busy and idle deltas as total ticks.
 4. Divide busy by total and clamp to `0...1`.
-5. Treat a zero total as unavailable rather than dividing by zero.
+5. If no ticks advanced, reuse the last filtered value. Keep it available after at least one valid utilization; startup remains unavailable until a valid utilization exists.
 
 The result is whole-system utilization. A value of `1.0` means all logical CPUs are busy. Status Driver's own work remains part of that total.
 
@@ -40,7 +40,7 @@ After a failed read, emit the last valid filtered value so terrain and collision
 
 ## Rolling terrain
 
-The scene maps streamed samples to fixed horizontal intervals and a configured vertical range. It connects adjacent samples with straight line segments. Drawing and collision construction consume the same mapped points.
+The scene maps streamed samples to fixed horizontal intervals and a configured vertical range. It connects adjacent samples with straight line segments. Drawing and collision construction consume the same mapped points. The SpriteKit stroke uses butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear CPU paths.
 
 The viewport advances smoothly with monotonic session time rather than jumping at sample boundaries. It trails the newest sample by a short fixed delay, leaving completed terrain beyond the right edge. Retention also keeps terrain beyond the left edge.
 

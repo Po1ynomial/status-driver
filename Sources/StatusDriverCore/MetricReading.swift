@@ -41,3 +41,35 @@ package enum MetricSourceMode: Equatable, Sendable {
         self = arguments.contains("--synthetic") ? .synthetic : .cpu
     }
 }
+
+package struct MetricStartupGate: Sendable {
+    private let sourceMode: MetricSourceMode
+    private let unavailableGracePeriod: TimeInterval
+    private var firstTimestamp: TimeInterval?
+    private var hasOpened = false
+
+    package init(
+        sourceMode: MetricSourceMode,
+        unavailableGracePeriod: TimeInterval = 0.3
+    ) {
+        self.sourceMode = sourceMode
+        self.unavailableGracePeriod = unavailableGracePeriod
+    }
+
+    package mutating func consume(_ reading: MetricReading) -> MetricReading? {
+        guard !hasOpened else { return reading }
+
+        if sourceMode == .synthetic || reading.availability == .available {
+            hasOpened = true
+            return reading
+        }
+
+        let start = firstTimestamp ?? reading.timestamp
+        firstTimestamp = start
+        if reading.timestamp - start >= unavailableGracePeriod {
+            hasOpened = true
+            return reading
+        }
+        return nil
+    }
+}

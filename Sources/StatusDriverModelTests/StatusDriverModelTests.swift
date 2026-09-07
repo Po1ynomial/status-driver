@@ -11,6 +11,7 @@ struct StatusDriverModelTests {
         let checks: [Check] = [
             ("sample normalization", { sampleNormalization() }),
             ("random walk bounds", { randomWalkBounds() }),
+            ("flat history prefill", { flatHistoryPrefill() }),
             ("pruning overlap", { pruningOverlap() }),
             ("bounded retention", { boundedRetention() }),
             ("point mapping", { pointMapping() }),
@@ -21,8 +22,9 @@ struct StatusDriverModelTests {
             ("CPU counter rollover", { cpuCounterRollover() }),
             ("CPU zero delta", { cpuZeroDelta() }),
             ("CPU smoothing", { cpuSmoothing() }),
-            ("CPU failure recovery", cpuFailureRecovery),
+            ("CPU zero-delta and failure recovery", cpuFailureRecovery),
             ("source selection", { sourceSelection() }),
+            ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
             ("stream cancellation", streamCancellation),
             ("live Mach CPU sample", liveMachCPUSample),
@@ -66,6 +68,15 @@ struct StatusDriverModelTests {
             }
         }
         return true
+    }
+
+    private static func flatHistoryPrefill() -> Bool {
+        var buffer = RollingSampleBuffer()
+        buffer.prefill(endingAt: 10, value: 0.4, interval: 0.15, duration: 1)
+
+        return approximatelyEqual(buffer.samples.first?.timestamp ?? -1, 8.95)
+            && approximatelyEqual(buffer.samples.last?.timestamp ?? -1, 10)
+            && buffer.samples.allSatisfy { $0.value == 0.4 }
     }
 
     private static func pruningOverlap() -> Bool {
@@ -182,6 +193,7 @@ struct StatusDriverModelTests {
         let reader = ScriptedTickReader(results: [
             .success(CPUTicks(user: 100, system: 50, idle: 850, nice: 0)),
             .success(CPUTicks(user: 112, system: 56, idle: 862, nice: 0)),
+            .success(CPUTicks(user: 112, system: 56, idle: 862, nice: 0)),
             .failure(.kernel(KERN_FAILURE)),
             .success(CPUTicks(user: 122, system: 61, idle: 877, nice: 0)),
         ])
@@ -189,13 +201,16 @@ struct StatusDriverModelTests {
 
         let baseline = await producer.reading(at: 0)
         let live = await producer.reading(at: 0.15)
-        let failed = await producer.reading(at: 0.30)
-        let recovered = await producer.reading(at: 0.45)
+        let zeroDelta = await producer.reading(at: 0.30)
+        let failed = await producer.reading(at: 0.45)
+        let recovered = await producer.reading(at: 0.60)
 
         return baseline.availability == .unavailable
             && baseline.value == 0.5
             && live.availability == .available
             && live.value == 0.6
+            && zeroDelta.availability == .available
+            && zeroDelta.value == live.value
             && failed.availability == .unavailable
             && failed.value == live.value
             && recovered.availability == .available
@@ -206,6 +221,43 @@ struct StatusDriverModelTests {
     private static func sourceSelection() -> Bool {
         MetricSourceMode(arguments: ["StatusDriver"]) == .cpu
             && MetricSourceMode(arguments: ["StatusDriver", "--synthetic"]) == .synthetic
+    }
+
+    private static func startupReadingGate() -> Bool {
+        var cpuGate = MetricStartupGate(sourceMode: .cpu, unavailableGracePeriod: 0.3)
+        let unavailable = MetricReading(
+            timestamp: 0,
+            value: 0.5,
+            source: .cpu,
+            availability: .unavailable
+        )
+        let available = MetricReading(
+            timestamp: 0.15,
+            value: 0.2,
+            source: .cpu,
+            availability: .available
+        )
+        guard cpuGate.consume(unavailable) == nil,
+              cpuGate.consume(available) == available else { return false }
+
+        var failedCPUGate = MetricStartupGate(sourceMode: .cpu, unavailableGracePeriod: 0.3)
+        guard failedCPUGate.consume(unavailable) == nil else { return false }
+        let fallback = MetricReading(
+            timestamp: 0.3,
+            value: 0.5,
+            source: .cpu,
+            availability: .unavailable
+        )
+
+        var syntheticGate = MetricStartupGate(sourceMode: .synthetic)
+        let synthetic = MetricReading(
+            timestamp: 0,
+            value: 0.4,
+            source: .synthetic,
+            availability: .available
+        )
+        return failedCPUGate.consume(fallback) == fallback
+            && syntheticGate.consume(synthetic) == synthetic
     }
 
     private static func streamSkipsDeadlineBackfill() async -> Bool {

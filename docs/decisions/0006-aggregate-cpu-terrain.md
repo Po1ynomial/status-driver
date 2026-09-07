@@ -1,6 +1,6 @@
 # 0006 - Use aggregate CPU utilization for genuine terrain
 
-- **Status:** Accepted
+- **Status:** Accepted; amended after runtime inspection
 - **Date:** 2026-09-07
 
 ## Decision
@@ -15,7 +15,9 @@ total = busy + delta(idle)
 utilization = busy / total
 ```
 
-Use wrapping counter subtraction, clamp the result to `0...1`, and treat a zero total as unavailable. A value of `1.0` means all logical CPUs are busy. Include Status Driver's own CPU work in the system total.
+Use wrapping counter subtraction and clamp the result to `0...1`. A value of `1.0` means all logical CPUs are busy. Include Status Driver's own CPU work in the system total.
+
+If a successful snapshot has no changed ticks, reuse the last filtered value without changing available status. Before the first calculated utilization, keep startup unavailable. Only an actual Mach read failure changes an established source to unavailable.
 
 Sample every 150 ms and apply a time-aware exponential moving average with a target time constant of roughly 0.75 seconds. Use the same filtered value for terrain and the displayed percentage.
 
@@ -31,4 +33,5 @@ Raw 150 ms CPU readings can create near-vertical terrain between adjacent points
 - The displayed percentage is filtered rather than an instantaneous raw reading.
 - Raw readings remain internal so later monitor work can use them differently.
 - CPU counter math requires tests for rollover and zero-delta intervals.
+- Successful zero-delta snapshots do not flash the monitor annotation to unavailable.
 - The source needs one baseline tick snapshot before it can calculate utilization.

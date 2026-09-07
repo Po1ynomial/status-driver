@@ -23,19 +23,19 @@ final class TerrainScene: SKScene {
     }
 
     private let configuration = Configuration()
+    private let timelineClock = ContinuousClock()
     private let trackingCamera = SKCameraNode()
     private let gridNode = SKNode()
     private let fillNode = SKShapeNode()
     private let lineNode = SKShapeNode()
     private let collisionNode = SKNode()
 
-    private var source = BoundedRandomWalkSource()
     private var sampleBuffer = RollingSampleBuffer()
     private var vehicle: Vehicle?
     private var pressedControls: Set<DrivingControl> = []
-    private var rendererStartTime: TimeInterval?
     private var elapsedTime: TimeInterval = 0
-    private var nextSampleTimestamp: TimeInterval = 0
+    private var latestReadingTimestamp: TimeInterval?
+    private var latestReadingArrival: ContinuousClock.Instant?
     private var vehicleCreationFramesRemaining = 3
     private var isConfigured = false
 
@@ -48,7 +48,6 @@ final class TerrainScene: SKScene {
 
         configureTerrainNodes()
         configureCamera()
-        prefillSamples()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
         view.window?.makeFirstResponder(view)
@@ -93,30 +92,37 @@ final class TerrainScene: SKScene {
     override func update(_ currentTime: TimeInterval) {
         guard isConfigured else { return }
 
-        if rendererStartTime == nil {
-            rendererStartTime = currentTime
-        }
-        guard let rendererStartTime else { return }
-
-        elapsedTime = currentTime - rendererStartTime
-        var addedSample = false
-        while nextSampleTimestamp <= elapsedTime {
-            let sample = source.nextSample(at: nextSampleTimestamp)
-            sampleBuffer.append(sample)
-            nextSampleTimestamp += configuration.sampleInterval
-            addedSample = true
-        }
-
+        updateTimelineTime()
         updateCamera()
-
-        if addedSample {
-            sampleBuffer.prune(before: elapsedTime - configuration.retentionDuration)
-            rebuildTerrain(rebuildCollisions: true)
-        }
-
         createVehicleAfterLayoutSettles()
         vehicle?.update(controls: pressedControls)
         resetVehicleIfOutsideViewport()
+    }
+
+    func ingest(_ reading: MetricReading) {
+        guard sampleBuffer.samples.last.map({ reading.timestamp > $0.timestamp }) ?? true else {
+            return
+        }
+
+        if sampleBuffer.samples.isEmpty {
+            sampleBuffer.prefill(
+                endingAt: reading.timestamp,
+                value: reading.value,
+                interval: configuration.sampleInterval,
+                duration: configuration.retentionDuration
+            )
+        } else {
+            sampleBuffer.append(reading.sample)
+            sampleBuffer.prune(before: reading.timestamp - configuration.retentionDuration)
+        }
+
+        latestReadingTimestamp = reading.timestamp
+        latestReadingArrival = timelineClock.now
+        elapsedTime = max(elapsedTime, reading.timestamp)
+
+        if isConfigured {
+            rebuildTerrain(rebuildCollisions: true)
+        }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -151,8 +157,8 @@ final class TerrainScene: SKScene {
 
         lineNode.strokeColor = NSColor(red: 0.105, green: 0.16, blue: 0.15, alpha: 1)
         lineNode.lineWidth = 4
-        lineNode.lineCap = .round
-        lineNode.lineJoin = .round
+        lineNode.lineCap = .butt
+        lineNode.lineJoin = .bevel
         lineNode.zPosition = -1
         addChild(lineNode)
 
@@ -169,28 +175,23 @@ final class TerrainScene: SKScene {
         updateCamera()
     }
 
-    private func prefillSamples() {
-        var timestamp = -configuration.retentionDuration
-        while timestamp <= 0 {
-            sampleBuffer.append(source.nextSample(at: timestamp))
-            timestamp += configuration.sampleInterval
-        }
-        nextSampleTimestamp = timestamp
-    }
-
     private func rebuildTerrain(rebuildCollisions: Bool) {
         let geometry = terrainGeometry(sceneHeight: size.height)
         lineNode.path = geometry.linePath()
         fillNode.path = geometry.fillPath()
 
-        if rebuildCollisions, let linePath = geometry.linePath() {
-            let body = SKPhysicsBody(edgeChainFrom: linePath)
-            body.friction = 0.92
-            body.restitution = 0.02
-            body.categoryBitMask = PhysicsCategory.terrain
-            body.collisionBitMask = PhysicsCategory.chassis | PhysicsCategory.wheel
-            body.contactTestBitMask = 0
-            collisionNode.physicsBody = body
+        if rebuildCollisions {
+            if let linePath = geometry.linePath() {
+                let body = SKPhysicsBody(edgeChainFrom: linePath)
+                body.friction = 0.92
+                body.restitution = 0.02
+                body.categoryBitMask = PhysicsCategory.terrain
+                body.collisionBitMask = PhysicsCategory.chassis | PhysicsCategory.wheel
+                body.contactTestBitMask = 0
+                collisionNode.physicsBody = body
+            } else {
+                collisionNode.physicsBody = nil
+            }
         }
     }
 
@@ -206,6 +207,18 @@ final class TerrainScene: SKScene {
         terrainGeometry(sceneHeight: sceneHeight).height(atWorldX: x)
     }
 
+    private func updateTimelineTime() {
+        guard let latestReadingTimestamp, let latestReadingArrival else { return }
+
+        let components = latestReadingArrival.duration(to: timelineClock.now).components
+        let timeSinceReading = Double(components.seconds) + Double(components.attoseconds) / 1e18
+        let interpolation = min(
+            max(0, timeSinceReading),
+            configuration.sampleInterval * 2
+        )
+        elapsedTime = latestReadingTimestamp + interpolation
+    }
+
     private func updateCamera() {
         let visibleRightX = CGFloat(elapsedTime - configuration.viewportDelay)
             * configuration.pointsPerSecond
@@ -216,7 +229,7 @@ final class TerrainScene: SKScene {
     }
 
     private func createVehicleAfterLayoutSettles() {
-        guard vehicle == nil else { return }
+        guard vehicle == nil, sampleBuffer.samples.count >= 2 else { return }
         guard vehicleCreationFramesRemaining == 0 else {
             vehicleCreationFramesRemaining -= 1
             return

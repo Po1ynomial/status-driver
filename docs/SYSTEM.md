@@ -2,15 +2,17 @@
 
 ## Implemented capabilities
 
-- `swift run StatusDriver` opens a native SwiftUI window containing a SpriteKit scene.
-- A bounded random walk emits normalized metric samples at a regular cadence.
-- An isolated telemetry pipeline can read aggregate Mach CPU ticks, calculate wrapping utilization deltas, smooth values, and emit availability-aware readings through a bounded asynchronous stream.
-- The stream uses a 150 ms `ContinuousClock` interval, skips deadline backfill, and cancels with its consumer.
-- Samples map to fixed world positions and produce one piecewise-linear point collection used by drawing and collision.
-- The viewport advances continuously behind the newest sample, leaving completed terrain beyond the right edge.
-- A 60-second rolling buffer retains offscreen history and removes older samples and geometry.
-- The scene redraws its graph grid and terrain mapping when the window changes size.
-- The current presentation has an off-white graph background, dark terrain line, and translucent fill.
+- `swift run StatusDriver` opens one native SwiftUI window and uses aggregate system CPU utilization as terrain.
+- `swift run StatusDriver -- --synthetic` selects the bounded random source instead.
+- An application-owned asynchronous stream samples every 150 ms independently of SpriteKit rendering.
+- CPU readings use unprivileged Mach host statistics, wrapping tick deltas, and a time-aware 0.75-second exponential moving average.
+- Normal CPU startup waits for the first calculated utilization before prefilling flat terrain. Persistent startup failure opens with a neutral value after 0.3 seconds.
+- Successful CPU snapshots with no changed ticks reuse the last value without flashing unavailable.
+- Failed Mach calls reuse the last filtered value with unavailable status and retry without changing source mode.
+- The upper-left annotation shows `CPU n%`, `SYNTHETIC n%`, or `CPU unavailable`.
+- Stream, sample, drawing, and collision retention remain bounded.
+- The viewport advances continuously behind the newest sample and retains completed terrain beyond the right edge.
+- The terrain stroke uses butt caps and bevel joins to avoid SpriteKit fragments on long, nearly flat paths.
 - A small orange chassis and two physical wheels ride on the terrain edge chain.
 - `D`/Right drives right, `A`/Left brakes then drives left, and `R` resets the car.
 - Leaving any viewport edge fully triggers the same centered, upright reset.
@@ -18,59 +20,52 @@
 ## Entry points
 
 - `Package.swift` defines the core library, application executable, and model-check executable.
-- `Sources/StatusDriver/StatusDriver.swift` defines the SwiftUI application and window.
-- `Sources/StatusDriver/TerrainView.swift` embeds the SpriteKit scene.
-- `Sources/StatusDriver/TerrainScene.swift` schedules samples, moves the viewport, prunes history, handles input, and coordinates vehicle reset.
+- `Sources/StatusDriver/StatusDriver.swift` selects the source mode and defines the single SwiftUI window.
+- `Sources/StatusDriver/TelemetrySession.swift` creates and consumes the application-owned metric stream.
+- `Sources/StatusDriver/TerrainView.swift` embeds SpriteKit and renders the source/value annotation.
+- `Sources/StatusDriver/TerrainScene.swift` ingests readings, moves the viewport, prunes history, handles input, and coordinates vehicle reset.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
-- `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU reading producer.
+- `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines the complete key-code mapping.
-- `Sources/StatusDriverCore/MetricReading.swift` defines source identity, availability, normalized streamed readings, and argument-based source selection.
-- `Sources/StatusDriverCore/MetricSample.swift` defines normalized terrain samples and the current scene-owned random source.
-- `Sources/StatusDriverCore/MetricStream.swift` defines the asynchronous producer, clock, bounded stream, and synthetic producer.
-- `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns ordered retention and pruning.
+- `Sources/StatusDriverCore/MetricReading.swift` defines source identity, availability, normalized readings, source selection, and startup gating.
+- `Sources/StatusDriverCore/MetricSample.swift` defines normalized terrain samples and the bounded random walk.
+- `Sources/StatusDriverCore/MetricStream.swift` defines producers, clocks, bounded asynchronous streaming, and the synthetic producer.
+- `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns flat prefill, ordered retention, and pruning.
 - `Sources/StatusDriverCore/TerrainGeometry.swift` maps samples and creates line and fill paths.
 - `Sources/StatusDriverModelTests/StatusDriverModelTests.swift` runs automated checks without Xcode test frameworks.
 
 ## Runtime flow
 
-1. The SpriteKit scene prefills 60 seconds of synthesized sample history.
-2. The source appends another normalized sample every 0.15 seconds.
-3. The scene maps retained samples at 120 points per second into its current height.
-4. The mapped points replace the visible line, translucent fill, and terrain edge-chain body.
-5. The camera moves every rendered frame and trails the newest sample by 2.75 seconds.
-6. The buffer keeps one segment crossing its cutoff and removes older points.
-7. Held horizontal controls set wheel motor speed before each physics step. No key applies chassis torque.
-8. A manual reset or a fully offscreen vehicle replaces the old bodies and joints with an upright vehicle above terrain at window center.
+1. `StatusDriverApp` parses `--synthetic`; all other launches select CPU.
+2. `TelemetrySession` creates the selected producer and a bounded 150 ms asynchronous stream.
+3. The CPU producer reads aggregate user, system, idle, and nice ticks and calculates non-idle utilization between successful snapshots.
+4. A successful zero-delta snapshot keeps the last value and available status after startup. A failed Mach call keeps the value but changes status to unavailable.
+5. The producer applies time-aware smoothing only when a new utilization exists.
+6. The startup gate normally waits for the first calculated CPU value. Synthetic mode starts immediately, while persistent CPU failure starts neutral terrain after 0.3 seconds.
+7. The main-actor session updates the annotation and sends accepted readings to `TerrainScene`.
+8. The scene prefills 60 seconds of flat history from its first reading, then appends and prunes streamed samples.
+9. The scene maps retained samples at 120 points per second into its current height and rebuilds the line, fill, and collision edge from the same points.
+10. The camera interpolates between reading arrivals and trails the newest sample by 2.75 seconds.
+11. Held horizontal controls set wheel motor speed before each physics step. Manual or offscreen reset replaces the vehicle bodies and joints at window center.
 
-These constants are prototype tuning values rather than stable interfaces.
-
-## Isolated telemetry flow
-
-1. `MachCPUTickReader` takes an unprivileged `HOST_CPU_LOAD_INFO` snapshot.
-2. `CPUUtilizationCalculator` compares successful snapshots with wrapping subtraction and returns non-idle utilization.
-3. `ExponentialMovingAverage` applies time-aware smoothing with a default 0.75-second time constant.
-4. `CPUMetricProducer` emits available filtered values or repeats the last value with unavailable status.
-5. `makeMetricStream` reads the current monotonic timestamp, requests one reading, then sleeps for 150 ms.
-6. Cancelling the stream consumer cancels a pending clock sleep and finishes production.
-
-The application does not consume this flow yet. Terrain integration belongs to the next slice.
+The sample cadence, smoothing interval, viewport delay, terrain scale, and physics constants are prototype tuning values rather than stable interfaces.
 
 ## Inspection
 
 - Run `swift build` to compile every package target.
-- Run `swift run StatusDriverModelTests` to execute terrain checks plus CPU delta, rollover, zero-delta, smoothing, failure recovery, source selection, scheduling, cancellation, and live Mach sampling checks.
-- Run `swift run StatusDriver` to inspect the complete interaction.
-- Verify that `D`/Right drives right and `A`/Left brakes rightward motion before driving left. `W`, `S`, Up, and Down should do nothing.
-- Verify that the chassis rotates only in response to terrain and collisions.
-- Verify that `R` resets the car and that fully leaving each viewport edge causes the same reset.
-- Resize the window and verify that the terrain stays aligned and the car preserves its clearance from the remapped terrain.
+- Run `swift run StatusDriverModelTests` to execute terrain, CPU math, smoothing, failure, source selection, startup, scheduling, cancellation, and live Mach checks.
+- Run `swift run StatusDriver` and verify the annotation says `CPU n%` without a permission prompt.
+- Generate temporary CPU load and verify the percentage and delayed terrain respond within about one second.
+- Run `swift run StatusDriver -- --synthetic` and verify the annotation and terrain identify synthetic mode.
+- Occlude the window for several seconds, restore it, and verify telemetry advanced without a burst of catch-up samples.
+- Verify driving, reset, and resizing in both source modes.
 
 ## Limitations
 
-- Vehicle feel depends on provisional motor, mass, damping, and wheel-torque constants that still need human tuning.
-- The visible application still uses its scene-owned synthetic source. The asynchronous CPU pipeline is not connected to terrain yet.
-- No memory telemetry is collected.
-- The application has no activity-monitor labels or controls.
+- Only aggregate CPU and synthetic sources exist. There is no per-core, memory, process, disk, or network telemetry.
+- The interface contains one source/value annotation but no metric controls, axes, legends, or full activity-monitor layout.
+- Telemetry history exists only for the current process and is not persisted.
+- CPU failure presentation has model coverage but no user-facing failure injection command.
 - The package targets macOS 26 and has no bundle, signing, or distribution setup.
-- This Command Line Tools installation has neither a usable `Testing` module nor `XCTest`. Automated checks therefore use a normal executable target rather than `swift test`.
-- SpriteKit may log `SKView: no drawables available` while the window is fully occluded. Rendering resumes when the window becomes visible.
+- This Command Line Tools installation has neither a usable `Testing` module nor `XCTest`. Automated checks use a normal executable target rather than `swift test`.
+- SpriteKit may occasionally log `SKView: no drawables available for rendering. Skipping this frame.` A lone skipped-frame diagnostic is harmless when animation and input remain smooth.
