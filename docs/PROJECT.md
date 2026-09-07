@@ -16,7 +16,7 @@ Build an objective-free prototype in which synthesized metric samples continuous
 
 - A native macOS application run from source.
 - One synthesized rolling metric rendered as physical terrain.
-- A two-wheel car controlled by arrow keys or WASD.
+- A small two-wheel car controlled horizontally by `A`/`D` or the left/right arrow keys.
 - Manual and automatic vehicle reset.
 - A replaceable normalized sample-source boundary.
 - Bounded retention of terrain data and collision geometry.
@@ -45,7 +45,7 @@ Build an objective-free prototype in which synthesized metric samples continuous
 - A prefetched bounded-random stream continuously adds piecewise-linear terrain to the right.
 - The viewport scrolls continuously behind the newest samples, retains collision terrain beyond both sides, and prunes old terrain.
 - The visible curve and collision edge use the same sample geometry.
-- A chassis with two physical wheels responds to the accepted arrow-key and WASD mapping.
+- A small chassis with two physical wheels responds to `A`/`D` and the left/right arrow keys without direct rotation controls.
 - `R` and leaving the viewport reset the car upright above the terrain at window center with velocity cleared.
 - Resizing preserves the live viewport, terrain alignment, and reset position.
 - Package-local automated checks cover sample normalization, rolling retention, geometry generation, and pruning.

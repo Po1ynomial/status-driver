@@ -27,6 +27,20 @@ package struct TerrainGeometry {
         points = samples.map { layout.point(for: $0, sceneHeight: sceneHeight) }
     }
 
+    package func height(atWorldX x: CGFloat) -> CGFloat? {
+        guard let first = points.first, let last = points.last else { return nil }
+        if x <= first.x { return first.y }
+        if x >= last.x { return last.y }
+
+        guard let upperIndex = points.firstIndex(where: { $0.x >= x }), upperIndex > 0 else {
+            return nil
+        }
+        let lower = points[upperIndex - 1]
+        let upper = points[upperIndex]
+        let progress = (x - lower.x) / (upper.x - lower.x)
+        return lower.y + (upper.y - lower.y) * progress
+    }
+
     package func linePath() -> CGPath? {
         guard let first = points.first, points.count >= 2 else { return nil }
 

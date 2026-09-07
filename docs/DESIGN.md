@@ -26,17 +26,17 @@ The viewport follows the live data window, not the car. Samples, drawing nodes, 
 
 ## Vehicle
 
-The car consists of a chassis and two physical wheels connected by pin joints. Wheel torque drives it along the terrain. Chassis torque rotates it on the ground or in the air.
+The car consists of a small chassis and two physical wheels connected by pin joints. It is about 55 percent of the original prototype vehicle size. Wheel torque moves the car along the terrain. The chassis receives no direct control torque, so terrain contact and gravity determine its rotation.
 
 Controls are:
 
-- `Up` or `W`: accelerate forward.
-- `Down` or `S`: brake, then reverse.
-- `Left` or `A`: rotate counterclockwise.
-- `Right` or `D`: rotate clockwise.
+- `Right` or `D`: drive toward the right.
+- `Left` or `A`: brake rightward motion, then drive toward the left.
 - `R`: reset.
 
-Reset places the car upright above the terrain at the horizontal center of the current window and clears linear and angular velocity. The scene invokes the same reset after the full car body leaves any viewport edge. Offscreen terrain margins preserve collision support before that reset.
+`Up`, `Down`, `W`, and `S` are unbound. Vertical or rotation controls may return later with a matching arrow-key scheme.
+
+Reset removes the existing bodies and joints, then creates an upright vehicle above the terrain at the horizontal center of the current window. Rebuilding avoids stale joint-solver impulses while clearing all motion. The scene invokes the same reset after the full car body leaves any viewport edge. Offscreen terrain margins preserve collision support before that reset.
 
 ## Presentation
 

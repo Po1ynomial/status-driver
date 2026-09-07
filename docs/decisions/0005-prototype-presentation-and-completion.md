@@ -13,7 +13,7 @@ Require the following evidence before the core prototype is complete:
 - Random samples continuously extend terrain while old data and geometry are pruned.
 - The viewport scrolls smoothly with collision terrain retained outside both horizontal edges.
 - Drawing and collision use the same mapped points.
-- The two-wheel car responds to every accepted key binding.
+- The two-wheel car responds to every accepted key binding and receives no direct chassis torque.
 - Manual and automatic reset place the car correctly and clear its velocity.
 - Window resizing preserves viewport behavior, terrain alignment, and reset placement.
 - Package-local automated checks cover sample normalization, rolling retention, geometry generation, and pruning.

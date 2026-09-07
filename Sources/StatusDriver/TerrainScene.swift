@@ -10,7 +10,8 @@ final class TerrainScene: SKScene {
         let viewportDelay: TimeInterval = 2.75
         let retentionDuration: TimeInterval = 60
         let bottomInset: CGFloat = 92
-        let topInset: CGFloat = 72
+        let topInset: CGFloat = 92
+        let resetClearance: CGFloat = 48
 
         var layout: TerrainLayout {
             TerrainLayout(
@@ -30,8 +31,12 @@ final class TerrainScene: SKScene {
 
     private var source = BoundedRandomWalkSource()
     private var sampleBuffer = RollingSampleBuffer()
+    private var vehicle: Vehicle?
+    private var pressedControls: Set<DrivingControl> = []
     private var rendererStartTime: TimeInterval?
+    private var elapsedTime: TimeInterval = 0
     private var nextSampleTimestamp: TimeInterval = 0
+    private var vehicleCreationFramesRemaining = 3
     private var isConfigured = false
 
     override func didMove(to view: SKView) {
@@ -45,16 +50,44 @@ final class TerrainScene: SKScene {
         configureCamera()
         prefillSamples()
         rebuildGrid()
-        rebuildTerrain()
+        rebuildTerrain(rebuildCollisions: true)
+        view.window?.makeFirstResponder(view)
+    }
+
+    override func willMove(from view: SKView) {
+        pressedControls.removeAll()
+        super.willMove(from: view)
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         guard isConfigured else { return }
 
-        trackingCamera.position.y = size.height / 2
+        let oldCameraX = trackingCamera.position.x
+        let oldVehiclePosition = vehicle?.chassis.position
+        let oldTerrainHeight = oldVehiclePosition.flatMap {
+            terrainHeight(atWorldX: $0.x, sceneHeight: oldSize.height)
+        }
+
+        updateCamera()
         rebuildGrid()
-        rebuildTerrain()
+        rebuildTerrain(rebuildCollisions: true)
+        if vehicle == nil {
+            vehicleCreationFramesRemaining = 3
+        }
+
+        if let oldVehiclePosition, let oldTerrainHeight {
+            let horizontalOffset = trackingCamera.position.x - oldCameraX
+            let newVehicleX = oldVehiclePosition.x + horizontalOffset
+            let newTerrainHeight = terrainHeight(atWorldX: newVehicleX, sceneHeight: size.height)
+                ?? oldTerrainHeight
+            replaceVehicle(
+                at: CGPoint(
+                    x: newVehicleX,
+                    y: oldVehiclePosition.y + newTerrainHeight - oldTerrainHeight
+                )
+            )
+        }
     }
 
     override func update(_ currentTime: TimeInterval) {
@@ -65,25 +98,49 @@ final class TerrainScene: SKScene {
         }
         guard let rendererStartTime else { return }
 
-        let elapsed = currentTime - rendererStartTime
+        elapsedTime = currentTime - rendererStartTime
         var addedSample = false
-        while nextSampleTimestamp <= elapsed {
-            sampleBuffer.append(source.nextSample(at: nextSampleTimestamp))
+        while nextSampleTimestamp <= elapsedTime {
+            let sample = source.nextSample(at: nextSampleTimestamp)
+            sampleBuffer.append(sample)
             nextSampleTimestamp += configuration.sampleInterval
             addedSample = true
         }
 
-        let visibleRightX = CGFloat(elapsed - configuration.viewportDelay)
-            * configuration.pointsPerSecond
-        trackingCamera.position = CGPoint(
-            x: visibleRightX - size.width / 2,
-            y: size.height / 2
-        )
+        updateCamera()
 
         if addedSample {
-            sampleBuffer.prune(before: elapsed - configuration.retentionDuration)
-            rebuildTerrain()
+            sampleBuffer.prune(before: elapsedTime - configuration.retentionDuration)
+            rebuildTerrain(rebuildCollisions: true)
         }
+
+        createVehicleAfterLayoutSettles()
+        vehicle?.update(controls: pressedControls)
+        resetVehicleIfOutsideViewport()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard let input = drivingInput(forKeyCode: event.keyCode) else { return }
+
+        switch input {
+        case let .control(control):
+            pressedControls.insert(control)
+        case .reset where !event.isARepeat:
+            resetVehicle()
+        case .reset:
+            break
+        }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard case let .control(control) = drivingInput(forKeyCode: event.keyCode) else {
+            return
+        }
+        pressedControls.remove(control)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        view?.window?.makeFirstResponder(view)
     }
 
     private func configureTerrainNodes() {
@@ -105,11 +162,11 @@ final class TerrainScene: SKScene {
 
     private func configureCamera() {
         camera = trackingCamera
-        trackingCamera.position = CGPoint(x: -size.width / 2, y: size.height / 2)
         addChild(trackingCamera)
 
         gridNode.zPosition = -20
         trackingCamera.addChild(gridNode)
+        updateCamera()
     }
 
     private func prefillSamples() {
@@ -121,24 +178,80 @@ final class TerrainScene: SKScene {
         nextSampleTimestamp = timestamp
     }
 
-    private func rebuildTerrain() {
-        let geometry = TerrainGeometry(
-            samples: sampleBuffer.samples,
-            layout: configuration.layout,
-            sceneHeight: size.height
-        )
-
+    private func rebuildTerrain(rebuildCollisions: Bool) {
+        let geometry = terrainGeometry(sceneHeight: size.height)
         lineNode.path = geometry.linePath()
         fillNode.path = geometry.fillPath()
 
-        if let linePath = geometry.linePath() {
+        if rebuildCollisions, let linePath = geometry.linePath() {
             let body = SKPhysicsBody(edgeChainFrom: linePath)
             body.friction = 0.92
-            body.restitution = 0.04
+            body.restitution = 0.02
+            body.categoryBitMask = PhysicsCategory.terrain
+            body.collisionBitMask = PhysicsCategory.chassis | PhysicsCategory.wheel
+            body.contactTestBitMask = 0
             collisionNode.physicsBody = body
-        } else {
-            collisionNode.physicsBody = nil
         }
+    }
+
+    private func terrainGeometry(sceneHeight: CGFloat) -> TerrainGeometry {
+        TerrainGeometry(
+            samples: sampleBuffer.samples,
+            layout: configuration.layout,
+            sceneHeight: sceneHeight
+        )
+    }
+
+    private func terrainHeight(atWorldX x: CGFloat, sceneHeight: CGFloat) -> CGFloat? {
+        terrainGeometry(sceneHeight: sceneHeight).height(atWorldX: x)
+    }
+
+    private func updateCamera() {
+        let visibleRightX = CGFloat(elapsedTime - configuration.viewportDelay)
+            * configuration.pointsPerSecond
+        trackingCamera.position = CGPoint(
+            x: visibleRightX - size.width / 2,
+            y: size.height / 2
+        )
+    }
+
+    private func createVehicleAfterLayoutSettles() {
+        guard vehicle == nil else { return }
+        guard vehicleCreationFramesRemaining == 0 else {
+            vehicleCreationFramesRemaining -= 1
+            return
+        }
+
+        replaceVehicle(at: vehicleResetPosition())
+    }
+
+    private func replaceVehicle(at position: CGPoint) {
+        vehicle?.remove(from: self)
+        vehicle = Vehicle(in: self, at: position)
+    }
+
+    private func resetVehicle() {
+        pressedControls.removeAll()
+        replaceVehicle(at: vehicleResetPosition())
+    }
+
+    private func resetVehicleIfOutsideViewport() {
+        let viewport = CGRect(
+            x: trackingCamera.position.x - size.width / 2,
+            y: trackingCamera.position.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        if vehicle?.isFullyOutside(viewport) == true {
+            resetVehicle()
+        }
+    }
+
+    private func vehicleResetPosition() -> CGPoint {
+        let x = trackingCamera.position.x
+        let terrainY = terrainHeight(atWorldX: x, sceneHeight: size.height)
+            ?? configuration.bottomInset
+        return CGPoint(x: x, y: terrainY + configuration.resetClearance)
     }
 
     private func rebuildGrid() {

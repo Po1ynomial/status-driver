@@ -13,6 +13,8 @@ struct StatusDriverModelTests {
             ("pruning overlap", pruningOverlap),
             ("bounded retention", boundedRetention),
             ("point mapping", pointMapping),
+            ("terrain interpolation", terrainInterpolation),
+            ("driving key map", drivingKeyMap),
             ("shared terrain geometry", sharedTerrainGeometry),
         ]
 
@@ -79,6 +81,32 @@ struct StatusDriverModelTests {
         let layout = TerrainLayout(pointsPerSecond: 20, bottomInset: 10, topInset: 10)
         let sample = MetricSample(timestamp: 2, value: 0.5)
         return layout.point(for: sample, sceneHeight: 110) == CGPoint(x: 40, y: 55)
+    }
+
+    private static func terrainInterpolation() -> Bool {
+        let samples = [
+            MetricSample(timestamp: 0, value: 0),
+            MetricSample(timestamp: 1, value: 1),
+        ]
+        let layout = TerrainLayout(pointsPerSecond: 20, bottomInset: 10, topInset: 10)
+        let geometry = TerrainGeometry(samples: samples, layout: layout, sceneHeight: 110)
+
+        return geometry.height(atWorldX: 10) == 55
+            && geometry.height(atWorldX: -10) == 10
+            && geometry.height(atWorldX: 30) == 100
+    }
+
+    private static func drivingKeyMap() -> Bool {
+        drivingInput(forKeyCode: 124) == .control(.driveRight)
+            && drivingInput(forKeyCode: 2) == .control(.driveRight)
+            && drivingInput(forKeyCode: 123) == .control(.brakeOrDriveLeft)
+            && drivingInput(forKeyCode: 0) == .control(.brakeOrDriveLeft)
+            && drivingInput(forKeyCode: 15) == .reset
+            && drivingInput(forKeyCode: 126) == nil
+            && drivingInput(forKeyCode: 125) == nil
+            && drivingInput(forKeyCode: 13) == nil
+            && drivingInput(forKeyCode: 1) == nil
+            && drivingInput(forKeyCode: 99) == nil
     }
 
     private static func sharedTerrainGeometry() -> Bool {
