@@ -16,12 +16,14 @@ Require the following evidence before the core prototype is complete:
 - The two-wheel car responds to every accepted key binding.
 - Manual and automatic reset place the car correctly and clear its velocity.
 - Window resizing preserves viewport behavior, terrain alignment, and reset placement.
-- Unit tests cover sample normalization, rolling retention, geometry generation, and pruning.
+- Package-local automated checks cover sample normalization, rolling retention, geometry generation, and pruning.
 - A manual run checks driving feel, scrolling, reset behavior, resizing, and bounded retention.
 
 ## Rationale
 
 The graph styling makes the product premise visible without committing to monitor information hierarchy. The orange car remains legible against the graph and reads as a secondary element. Automated checks fit the data and geometry model, while manual inspection is more useful for physics feel and animation quality.
+
+The installed Command Line Tools do not include a usable `Testing` or `XCTest` runtime. The owner accepted `swift run StatusDriverModelTests` as the automated inspection command instead of installing full Xcode solely for `swift test`.
 
 ## Consequences
 

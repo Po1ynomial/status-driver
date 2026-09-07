@@ -48,7 +48,7 @@ Build an objective-free prototype in which synthesized metric samples continuous
 - A chassis with two physical wheels responds to the accepted arrow-key and WASD mapping.
 - `R` and leaving the viewport reset the car upright above the terrain at window center with velocity cleared.
 - Resizing preserves the live viewport, terrain alignment, and reset position.
-- Unit tests cover sample normalization, rolling retention, geometry generation, and pruning.
+- Package-local automated checks cover sample normalization, rolling retention, geometry generation, and pruning.
 - A manual run verifies driving, continuous scrolling, resets, resize behavior, and bounded retention.
 - The prototype has no game objectives or HUD.
 

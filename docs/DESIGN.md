@@ -46,4 +46,6 @@ The window is resizable. Resizing updates viewport calculations, terrain alignme
 
 ## Inspection and checks
 
-Automated tests cover normalized sample handling, rolling retention, point mapping, shared draw-and-collision geometry, and pruning. Physics feel, smooth scrolling, controls, automatic and manual reset, resizing, and bounded retention receive a manual run check.
+The installed Command Line Tools lack a usable `Testing` or `XCTest` runtime, so a package-local executable runs the automated model checks. `swift run StatusDriverModelTests` covers normalized sample handling, rolling retention, point mapping, shared draw-and-collision geometry, and pruning.
+
+Physics feel, smooth scrolling, controls, automatic and manual reset, resizing, and bounded retention receive a manual run check.
