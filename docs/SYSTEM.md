@@ -4,6 +4,8 @@
 
 - `swift run StatusDriver` opens a native SwiftUI window containing a SpriteKit scene.
 - A bounded random walk emits normalized metric samples at a regular cadence.
+- An isolated telemetry pipeline can read aggregate Mach CPU ticks, calculate wrapping utilization deltas, smooth values, and emit availability-aware readings through a bounded asynchronous stream.
+- The stream uses a 150 ms `ContinuousClock` interval, skips deadline backfill, and cancels with its consumer.
 - Samples map to fixed world positions and produce one piecewise-linear point collection used by drawing and collision.
 - The viewport advances continuously behind the newest sample, leaving completed terrain beyond the right edge.
 - A 60-second rolling buffer retains offscreen history and removes older samples and geometry.
@@ -20,8 +22,11 @@
 - `Sources/StatusDriver/TerrainView.swift` embeds the SpriteKit scene.
 - `Sources/StatusDriver/TerrainScene.swift` schedules samples, moves the viewport, prunes history, handles input, and coordinates vehicle reset.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
+- `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU reading producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines the complete key-code mapping.
-- `Sources/StatusDriverCore/MetricSample.swift` defines normalized samples and the random source.
+- `Sources/StatusDriverCore/MetricReading.swift` defines source identity, availability, normalized streamed readings, and argument-based source selection.
+- `Sources/StatusDriverCore/MetricSample.swift` defines normalized terrain samples and the current scene-owned random source.
+- `Sources/StatusDriverCore/MetricStream.swift` defines the asynchronous producer, clock, bounded stream, and synthetic producer.
 - `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns ordered retention and pruning.
 - `Sources/StatusDriverCore/TerrainGeometry.swift` maps samples and creates line and fill paths.
 - `Sources/StatusDriverModelTests/StatusDriverModelTests.swift` runs automated checks without Xcode test frameworks.
@@ -39,10 +44,21 @@
 
 These constants are prototype tuning values rather than stable interfaces.
 
+## Isolated telemetry flow
+
+1. `MachCPUTickReader` takes an unprivileged `HOST_CPU_LOAD_INFO` snapshot.
+2. `CPUUtilizationCalculator` compares successful snapshots with wrapping subtraction and returns non-idle utilization.
+3. `ExponentialMovingAverage` applies time-aware smoothing with a default 0.75-second time constant.
+4. `CPUMetricProducer` emits available filtered values or repeats the last value with unavailable status.
+5. `makeMetricStream` reads the current monotonic timestamp, requests one reading, then sleeps for 150 ms.
+6. Cancelling the stream consumer cancels a pending clock sleep and finishes production.
+
+The application does not consume this flow yet. Terrain integration belongs to the next slice.
+
 ## Inspection
 
 - Run `swift build` to compile every package target.
-- Run `swift run StatusDriverModelTests` to execute normalization, random bounds, retention, point mapping, interpolation, key mapping, and geometry checks.
+- Run `swift run StatusDriverModelTests` to execute terrain checks plus CPU delta, rollover, zero-delta, smoothing, failure recovery, source selection, scheduling, cancellation, and live Mach sampling checks.
 - Run `swift run StatusDriver` to inspect the complete interaction.
 - Verify that `D`/Right drives right and `A`/Left brakes rightward motion before driving left. `W`, `S`, Up, and Down should do nothing.
 - Verify that the chassis rotates only in response to terrain and collisions.
@@ -52,7 +68,8 @@ These constants are prototype tuning values rather than stable interfaces.
 ## Limitations
 
 - Vehicle feel depends on provisional motor, mass, damping, and wheel-torque constants that still need human tuning.
-- The source is synthesized. No CPU or memory telemetry is collected.
+- The visible application still uses its scene-owned synthetic source. The asynchronous CPU pipeline is not connected to terrain yet.
+- No memory telemetry is collected.
 - The application has no activity-monitor labels or controls.
 - The package targets macOS 26 and has no bundle, signing, or distribution setup.
 - This Command Line Tools installation has neither a usable `Testing` module nor `XCTest`. Automated checks therefore use a normal executable target rather than `swift test`.
