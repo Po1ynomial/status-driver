@@ -188,12 +188,28 @@ private struct PerformanceDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                SpriteKitView(scene: scene)
-                    .frame(height: 280)
-                    .overlay {
-                        Rectangle()
-                            .stroke(telemetry.selectedMetric.tint.opacity(0.72), lineWidth: 1)
+                VStack(spacing: 3) {
+                    SpriteKitView(scene: scene)
+                        .frame(height: 280)
+                        .overlay(alignment: .topTrailing) {
+                            Text(verticalMaximum)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .padding(5)
+                        }
+                        .overlay {
+                            Rectangle()
+                                .stroke(telemetry.selectedMetric.tint.opacity(0.72), lineWidth: 1)
+                        }
+
+                    HStack {
+                        Text("61 seconds")
+                        Spacer()
+                        Text("1 second")
                     }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
 
                 if telemetry.selectedMetric == .memory {
                     MemoryCompositionView(details: memoryDetails)
@@ -244,6 +260,15 @@ private struct PerformanceDetailView: View {
             return nil
         }
         return details
+    }
+
+    private var verticalMaximum: String {
+        switch telemetry.selectedMetric {
+        case .cpu:
+            "100%"
+        case .memory:
+            telemetry.hardwareProfile?.installedMemoryBytes.map(formatBytes) ?? "100%"
+        }
     }
 }
 

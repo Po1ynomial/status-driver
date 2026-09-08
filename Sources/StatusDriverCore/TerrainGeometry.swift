@@ -1,4 +1,34 @@
 import CoreGraphics
+import Foundation
+
+package struct GraphTimelineLayout: Equatable {
+    package let width: CGFloat
+    package let visibleDuration: TimeInterval
+
+    package init(width: CGFloat, visibleDuration: TimeInterval = 60) {
+        precondition(width > 0)
+        precondition(visibleDuration > 0)
+        self.width = width
+        self.visibleDuration = visibleDuration
+    }
+
+    package var pointsPerSecond: CGFloat {
+        width / CGFloat(visibleDuration)
+    }
+
+    package func worldX(for timestamp: TimeInterval) -> CGFloat {
+        CGFloat(timestamp) * pointsPerSecond
+    }
+
+    package func cameraCenterX(endingAt timestamp: TimeInterval) -> CGFloat {
+        worldX(for: timestamp) - width / 2
+    }
+
+    package func visibleWorldRange(endingAt timestamp: TimeInterval) -> ClosedRange<CGFloat> {
+        let right = worldX(for: timestamp)
+        return (right - width)...right
+    }
+}
 
 package struct TerrainLayout: Equatable {
     package let pointsPerSecond: CGFloat
@@ -48,6 +78,22 @@ package struct TerrainGeometry {
         path.move(to: first)
         for point in points.dropFirst() {
             path.addLine(to: point)
+        }
+        return path
+    }
+
+    package func collisionPath(rightExtension: CGFloat) -> CGPath? {
+        guard let first = points.first, let last = points.last, points.count >= 2 else {
+            return nil
+        }
+
+        let path = CGMutablePath()
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        if rightExtension > 0 {
+            path.addLine(to: CGPoint(x: last.x + rightExtension, y: last.y))
         }
         return path
     }

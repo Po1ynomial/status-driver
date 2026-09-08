@@ -15,7 +15,7 @@ final class TelemetrySession: ObservableObject {
     private var selection = MetricSelectionState()
     private var interfaceHistories = MetricHistoryStore(
         sampleInterval: 0.15,
-        retentionDuration: 60
+        retentionDuration: 65
     )
     private var isRunning = false
 
@@ -30,7 +30,7 @@ final class TelemetrySession: ObservableObject {
         latestMemoryReading = nil
         cpuHistory = []
         memoryHistory = []
-        interfaceHistories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 60)
+        interfaceHistories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 65)
         hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
@@ -99,8 +99,10 @@ final class TelemetrySession: ObservableObject {
     }
 
     private func ingest(_ reading: MetricReading, into scene: TerrainScene) {
-        guard interfaceHistories.ingest(reading) else { return }
+        let update = interfaceHistories.ingestUpdate(reading)
+        guard update.wasAccepted else { return }
         scene.ingest(reading)
+        guard update == .historyChanged else { return }
 
         switch reading.metric {
         case .cpu:

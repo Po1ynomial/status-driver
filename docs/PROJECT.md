@@ -20,7 +20,7 @@ Turn the CPU and Memory prototype into a recognizable activity-monitor interface
 - Reclaimability-aware memory composition.
 - CPU blue and Memory violet visual identities.
 - Automatic light and dark appearance.
-- A live graph ending at the newest reading with hidden offscreen collision support.
+- A committed 60-second graph ending one second behind live telemetry with hidden offscreen collision support.
 - A hidden-by-default car toggled with `C`.
 - Existing terrain selection, driving, resize, and reset behavior.
 
@@ -42,7 +42,7 @@ Turn the CPU and Memory prototype into a recognizable activity-monitor interface
 - The sidebar contains only implemented resources and can resize or collapse using macOS behavior.
 - CPU and Memory retain independent telemetry, availability, smoothing, and history.
 - The main graph and sidebar sparklines show the same truthful 60-second history.
-- The visible graph ends at the newest reading. Fabricated flat terrain may exist only outside the visible right edge for collision safety.
+- Terrain points finalize before entering view and never change afterward. Fabricated flat terrain may exist only outside the visible right edge for collision safety.
 - SpriteKit is limited to the main graph area.
 - Secondary detail failures never mark terrain telemetry unavailable.
 - The car remains absent until the user presses `C` and has no in-application documentation.
@@ -57,7 +57,7 @@ Turn the CPU and Memory prototype into a recognizable activity-monitor interface
 - CPU omits speed, base speed, handles, and unavailable cache levels.
 - Memory details show installed, in use, available, app, wired, compressed, file-cache, and unified-memory values plus a composition bar.
 - Memory omits fields without honest macOS mappings.
-- Main graph labels describe a 60-second history ending at `0` and remain consistent with the current value.
+- Main graph labels describe the committed 60-second span from `61 seconds` to `1 second`; current numeric values remain live.
 - CPU uses blue, Memory uses violet, and the interface supports native light and dark appearances.
 - Fast telemetry remains at 150 ms, process/thread/uptime details refresh once per second, and hardware metadata loads once.
 - The default window is about `1200 x 700`; a provisional minimum near `900 x 600` keeps the graph usable.

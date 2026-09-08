@@ -8,16 +8,21 @@ final class TerrainScene: SKScene {
 
     private struct Configuration {
         let sampleInterval: TimeInterval = 0.15
-        let pointsPerSecond: CGFloat = 120
-        let viewportDelay: TimeInterval = 2.75
-        let retentionDuration: TimeInterval = 60
-        let bottomInset: CGFloat = 92
-        let topInset: CGFloat = 92
+        let visibleDuration: TimeInterval = 60
+        let commitDelay: TimeInterval = 1
+        let retentionDuration: TimeInterval = 65
+        let rightCollisionMargin: CGFloat = 120
+        let bottomInset: CGFloat = 48
+        let topInset: CGFloat = 64
         let resetClearance: CGFloat = 48
 
-        var layout: TerrainLayout {
+        func timeline(width: CGFloat) -> GraphTimelineLayout {
+            GraphTimelineLayout(width: max(1, width), visibleDuration: visibleDuration)
+        }
+
+        func terrainLayout(width: CGFloat) -> TerrainLayout {
             TerrainLayout(
-                pointsPerSecond: pointsPerSecond,
+                pointsPerSecond: timeline(width: width).pointsPerSecond,
                 bottomInset: bottomInset,
                 topInset: topInset
             )
@@ -25,7 +30,6 @@ final class TerrainScene: SKScene {
     }
 
     private let configuration = Configuration()
-    private let timelineClock = ContinuousClock()
     private let trackingCamera = SKCameraNode()
     private let gridNode = SKNode()
     private var fillNode = SKShapeNode()
@@ -37,12 +41,10 @@ final class TerrainScene: SKScene {
         retentionDuration: configuration.retentionDuration
     )
     private var selectedMetric: MetricIdentity = .cpu
+    private var vehicleVisibility = VehicleVisibilityState()
     private var vehicle: Vehicle?
     private var pressedControls: Set<DrivingControl> = []
-    private var elapsedTime: TimeInterval = 0
     private var latestReadingTimestamp: TimeInterval?
-    private var latestReadingArrival: ContinuousClock.Instant?
-    private var vehicleCreationFramesRemaining = 3
     private var isDarkAppearance = false
     private var isConfigured = false
 
@@ -51,7 +53,6 @@ final class TerrainScene: SKScene {
         isConfigured = true
 
         physicsWorld.gravity = CGVector(dx: 0, dy: -18)
-
         configureTerrainNodes()
         applyGraphStyle()
         configureCamera()
@@ -69,51 +70,30 @@ final class TerrainScene: SKScene {
         super.didChangeSize(oldSize)
         guard isConfigured else { return }
 
-        let oldCameraX = trackingCamera.position.x
-        let oldVehiclePosition = vehicle?.chassis.position
-        let oldTerrainHeight = oldVehiclePosition.flatMap {
-            terrainHeight(atWorldX: $0.x, sceneHeight: oldSize.height)
-        }
-
         updateCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
-        if vehicle == nil {
-            vehicleCreationFramesRemaining = 3
-        }
-
-        if let oldVehiclePosition, let oldTerrainHeight {
-            let horizontalOffset = trackingCamera.position.x - oldCameraX
-            let newVehicleX = oldVehiclePosition.x + horizontalOffset
-            let newTerrainHeight = terrainHeight(atWorldX: newVehicleX, sceneHeight: size.height)
-                ?? oldTerrainHeight
-            replaceVehicle(
-                at: CGPoint(
-                    x: newVehicleX,
-                    y: oldVehiclePosition.y + newTerrainHeight - oldTerrainHeight
-                )
-            )
+        if vehicleVisibility.isVisible {
+            resetVehicle()
         }
     }
 
     override func update(_ currentTime: TimeInterval) {
         guard isConfigured else { return }
 
-        updateTimelineTime()
         updateCamera()
-        createVehicleAfterLayoutSettles()
+        ensureVisibleVehicleExists()
         vehicle?.update(controls: pressedControls)
         resetVehicleIfOutsideViewport()
     }
 
     func ingest(_ reading: MetricReading) {
-        guard histories.ingest(reading) else { return }
+        let update = histories.ingestUpdate(reading)
+        guard update.wasAccepted else { return }
 
         latestReadingTimestamp = max(latestReadingTimestamp ?? reading.timestamp, reading.timestamp)
-        latestReadingArrival = timelineClock.now
-        elapsedTime = max(elapsedTime, reading.timestamp)
-
-        if isConfigured, reading.metric == selectedMetric {
+        if isConfigured, reading.metric == selectedMetric, update == .historyChanged {
+            updateCamera()
             rebuildTerrain(rebuildCollisions: true)
         }
     }
@@ -136,7 +116,9 @@ final class TerrainScene: SKScene {
         selectedMetric = metric
         applyGraphStyle()
         rebuildTerrain(rebuildCollisions: true)
-        resetVehicle()
+        if vehicleVisibility.isVisible {
+            resetVehicle()
+        }
         view?.window?.makeFirstResponder(view)
         return true
     }
@@ -150,13 +132,16 @@ final class TerrainScene: SKScene {
         }
 
         guard let input = drivingInput(forKeyCode: event.keyCode) else { return }
-
         switch input {
         case let .control(control):
-            pressedControls.insert(control)
+            if vehicleVisibility.isVisible {
+                pressedControls.insert(control)
+            }
         case .reset where !event.isARepeat:
             resetVehicle()
-        case .reset:
+        case .toggleCar where !event.isARepeat:
+            toggleVehicle()
+        case .reset, .toggleCar:
             break
         }
     }
@@ -203,10 +188,7 @@ final class TerrainScene: SKScene {
         backgroundColor = isDarkAppearance
             ? NSColor(red: 0.085, green: 0.095, blue: 0.11, alpha: 1)
             : NSColor(red: 0.975, green: 0.978, blue: 0.97, alpha: 1)
-        lineNode.strokeColor = color
-        fillNode.fillColor = color.withAlphaComponent(isDarkAppearance ? 0.20 : 0.14)
 
-        // SpriteKit caches shape style state after first render, so replace only on style changes.
         let linePath = lineNode.path
         let fillPath = fillNode.path
         lineNode.removeFromParent()
@@ -218,6 +200,7 @@ final class TerrainScene: SKScene {
         fillNode.zPosition = -2
         addChild(fillNode)
 
+        // Replacing the node avoids SpriteKit retaining its first rendered stroke style.
         lineNode = SKShapeNode(path: linePath ?? CGMutablePath())
         lineNode.strokeColor = color
         lineNode.lineWidth = 4
@@ -242,8 +225,10 @@ final class TerrainScene: SKScene {
         fillNode.path = geometry.fillPath()
 
         if rebuildCollisions {
-            if let linePath = geometry.linePath() {
-                let body = SKPhysicsBody(edgeChainFrom: linePath)
+            if let collisionPath = geometry.collisionPath(
+                rightExtension: configuration.rightCollisionMargin
+            ) {
+                let body = SKPhysicsBody(edgeChainFrom: collisionPath)
                 body.friction = 0.92
                 body.restitution = 0.02
                 body.categoryBitMask = PhysicsCategory.terrain
@@ -259,7 +244,7 @@ final class TerrainScene: SKScene {
     private func terrainGeometry(sceneHeight: CGFloat) -> TerrainGeometry {
         TerrainGeometry(
             samples: histories.samples(for: selectedMetric),
-            layout: configuration.layout,
+            layout: configuration.terrainLayout(width: size.width),
             sceneHeight: sceneHeight
         )
     }
@@ -268,34 +253,29 @@ final class TerrainScene: SKScene {
         terrainGeometry(sceneHeight: sceneHeight).height(atWorldX: x)
     }
 
-    private func updateTimelineTime() {
-        guard let latestReadingTimestamp, let latestReadingArrival else { return }
-
-        let components = latestReadingArrival.duration(to: timelineClock.now).components
-        let timeSinceReading = Double(components.seconds) + Double(components.attoseconds) / 1e18
-        let interpolation = min(
-            max(0, timeSinceReading),
-            configuration.sampleInterval * 2
-        )
-        elapsedTime = latestReadingTimestamp + interpolation
-    }
-
     private func updateCamera() {
-        let visibleRightX = CGFloat(elapsedTime - configuration.viewportDelay)
-            * configuration.pointsPerSecond
+        let timeline = configuration.timeline(width: size.width)
+        let endingTimestamp = (latestReadingTimestamp ?? 0) - configuration.commitDelay
         trackingCamera.position = CGPoint(
-            x: visibleRightX - size.width / 2,
+            x: timeline.cameraCenterX(endingAt: endingTimestamp),
             y: size.height / 2
         )
     }
 
-    private func createVehicleAfterLayoutSettles() {
-        guard vehicle == nil, histories.samples(for: selectedMetric).count >= 2 else { return }
-        guard vehicleCreationFramesRemaining == 0 else {
-            vehicleCreationFramesRemaining -= 1
-            return
+    private func toggleVehicle() {
+        if vehicleVisibility.toggle() {
+            ensureVisibleVehicleExists()
+        } else {
+            pressedControls.removeAll()
+            vehicle?.remove(from: self)
+            vehicle = nil
         }
+    }
 
+    private func ensureVisibleVehicleExists() {
+        guard vehicleVisibility.isVisible,
+              vehicle == nil,
+              histories.samples(for: selectedMetric).count >= 2 else { return }
         replaceVehicle(at: vehicleResetPosition())
     }
 
@@ -305,18 +285,25 @@ final class TerrainScene: SKScene {
     }
 
     private func resetVehicle() {
+        guard vehicleVisibility.isVisible else { return }
         pressedControls.removeAll()
+        guard histories.samples(for: selectedMetric).count >= 2 else {
+            vehicle?.remove(from: self)
+            vehicle = nil
+            return
+        }
         replaceVehicle(at: vehicleResetPosition())
     }
 
     private func resetVehicleIfOutsideViewport() {
+        guard let vehicle else { return }
         let viewport = CGRect(
             x: trackingCamera.position.x - size.width / 2,
             y: trackingCamera.position.y - size.height / 2,
             width: size.width,
             height: size.height
         )
-        if vehicle?.isFullyOutside(viewport) == true {
+        if vehicle.isFullyOutside(viewport) {
             resetVehicle()
         }
     }
@@ -334,22 +321,20 @@ final class TerrainScene: SKScene {
         let path = CGMutablePath()
         let width = size.width
         let height = size.height
-        let minorSpacing: CGFloat = 40
         let originX = -width / 2
         let originY = -height / 2
+        let verticalSpacing = width / 12
+        let horizontalSpacing = height / 8
 
-        var x = originX
-        while x <= width / 2 {
+        for index in 0...12 {
+            let x = originX + CGFloat(index) * verticalSpacing
             path.move(to: CGPoint(x: x, y: originY))
             path.addLine(to: CGPoint(x: x, y: height / 2))
-            x += minorSpacing
         }
-
-        var y = originY
-        while y <= height / 2 {
+        for index in 0...8 {
+            let y = originY + CGFloat(index) * horizontalSpacing
             path.move(to: CGPoint(x: originX, y: y))
             path.addLine(to: CGPoint(x: width / 2, y: y))
-            y += minorSpacing
         }
 
         let lines = SKShapeNode(path: path)

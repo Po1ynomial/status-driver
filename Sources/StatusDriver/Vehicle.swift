@@ -15,10 +15,10 @@ final class Vehicle {
         static let wheelRadius: CGFloat = 10.5
         static let wheelOffsetX: CGFloat = 19.25
         static let wheelOffsetY: CGFloat = -10.5
-        static let rightRotationSpeed: CGFloat = -17
-        static let leftRotationSpeed: CGFloat = 14
-        static let driveTorque: CGFloat = 6.5
-        static let brakeTorque: CGFloat = 10
+        static let rightRotationSpeed: CGFloat = -6
+        static let leftRotationSpeed: CGFloat = 5
+        static let driveTorque: CGFloat = 3.5
+        static let brakeTorque: CGFloat = 6
         static let coastingTorque: CGFloat = 0.25
     }
 

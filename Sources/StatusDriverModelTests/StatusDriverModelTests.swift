@@ -16,7 +16,10 @@ struct StatusDriverModelTests {
             ("bounded retention", { boundedRetention() }),
             ("point mapping", { pointMapping() }),
             ("terrain interpolation", { terrainInterpolation() }),
+            ("60-second graph timeline", { graphTimelineMapping() }),
+            ("hidden collision extension", { hiddenCollisionExtension() }),
             ("driving key map", { drivingKeyMap() }),
+            ("vehicle visibility state", { vehicleVisibilityState() }),
             ("shared terrain geometry", { sharedTerrainGeometry() }),
             ("CPU utilization", { cpuUtilization() }),
             ("CPU counter rollover", { cpuCounterRollover() }),
@@ -29,8 +32,12 @@ struct StatusDriverModelTests {
             ("memory failure recovery", memoryFailureRecovery),
             ("metric failure isolation", metricFailureIsolation),
             ("dual synthetic channels", dualSyntheticChannels),
+            ("chart bucket averaging", { chartBucketAveraging() }),
+            ("chart skips gap backfill", { chartSkipsGapBackfill() }),
+            ("chart history density", { chartHistoryDensity() }),
             ("independent metric histories", { independentMetricHistories() }),
             ("dual history retention", { dualHistoryRetention() }),
+            ("left terrain margin retention", { leftTerrainMarginRetention() }),
             ("metric selection rules", { metricSelectionRules() }),
             ("metric selection key map", { metricSelectionKeyMap() }),
             ("source selection", { sourceSelection() }),
@@ -139,6 +146,29 @@ struct StatusDriverModelTests {
             && geometry.height(atWorldX: 30) == 100
     }
 
+    private static func graphTimelineMapping() -> Bool {
+        let timeline = GraphTimelineLayout(width: 900, visibleDuration: 60)
+        return timeline.pointsPerSecond == 15
+            && timeline.worldX(for: 100) == 1_500
+            && timeline.cameraCenterX(endingAt: 100) == 1_050
+            && timeline.visibleWorldRange(endingAt: 100) == 600...1_500
+    }
+
+    private static func hiddenCollisionExtension() -> Bool {
+        let samples = [
+            MetricSample(timestamp: 0, value: 0.5),
+            MetricSample(timestamp: 1, value: 0.5),
+        ]
+        let layout = TerrainLayout(pointsPerSecond: 20, bottomInset: 0, topInset: 0)
+        let geometry = TerrainGeometry(samples: samples, layout: layout, sceneHeight: 100)
+        guard let visible = geometry.linePath(),
+              let collision = geometry.collisionPath(rightExtension: 120) else { return false }
+
+        return visible.boundingBox.maxX == 20
+            && collision.boundingBox.maxX == 140
+            && collision.boundingBox.maxY == visible.boundingBox.maxY
+    }
+
     private static func drivingKeyMap() -> Bool {
         drivingInput(forKeyCode: 124) == .control(.driveRight)
             && drivingInput(forKeyCode: 2) == .control(.driveRight)
@@ -149,7 +179,17 @@ struct StatusDriverModelTests {
             && drivingInput(forKeyCode: 125) == nil
             && drivingInput(forKeyCode: 13) == nil
             && drivingInput(forKeyCode: 1) == nil
+            && drivingInput(forKeyCode: 8) == .toggleCar
             && drivingInput(forKeyCode: 99) == nil
+    }
+
+    private static func vehicleVisibilityState() -> Bool {
+        var visibility = VehicleVisibilityState()
+        guard !visibility.isVisible else { return false }
+        let shown = visibility.toggle()
+        let visibleAfterShow = visibility.isVisible
+        let hidden = !visibility.toggle()
+        return shown && visibleAfterShow && hidden && !visibility.isVisible
     }
 
     private static func sharedTerrainGeometry() -> Bool {
@@ -369,19 +409,95 @@ struct StatusDriverModelTests {
             && snapshot.memory.value > 0.6
     }
 
+    private static func chartBucketAveraging() -> Bool {
+        var histories = MetricHistoryStore(
+            sampleInterval: 0.15,
+            retentionDuration: 65,
+            chartInterval: 1
+        )
+        let initial = histories.ingestUpdate(
+            metricReading(timestamp: 0, value: 0.2, metric: .cpu)
+        )
+        let firstOpenBucketUpdate = histories.ingestUpdate(
+            metricReading(timestamp: 0.3, value: 0.4, metric: .cpu)
+        )
+        let secondOpenBucketUpdate = histories.ingestUpdate(
+            metricReading(timestamp: 0.9, value: 0.8, metric: .cpu)
+        )
+
+        let exposedBeforeFinalization = histories.samples(for: .cpu)
+        guard initial == .historyChanged,
+              firstOpenBucketUpdate == .timelineAdvanced,
+              secondOpenBucketUpdate == .timelineAdvanced,
+              exposedBeforeFinalization.last == MetricSample(timestamp: 0, value: 0.2) else {
+            return false
+        }
+
+        let bucketClose = histories.ingestUpdate(
+            metricReading(timestamp: 1.05, value: 0.6, metric: .cpu)
+        )
+        let finalized = histories.samples(for: .cpu)
+        guard bucketClose == .historyChanged, finalized.count >= 2 else { return false }
+        let retainedPrefix = Array(finalized.dropLast())
+        guard let retainedStart = retainedPrefix.first?.timestamp else { return false }
+        let expectedRetainedPrefix = exposedBeforeFinalization.filter {
+            $0.timestamp >= retainedStart
+        }
+        guard retainedPrefix == expectedRetainedPrefix else { return false }
+        let average = finalized[finalized.count - 1]
+        return average.timestamp == 0.9
+            && approximatelyEqual(average.value, (0.2 + 0.4 + 0.8) / 3)
+    }
+
+    private static func chartSkipsGapBackfill() -> Bool {
+        var histories = MetricHistoryStore(
+            sampleInterval: 0.15,
+            retentionDuration: 65,
+            chartInterval: 1
+        )
+        histories.ingest(metricReading(timestamp: 0, value: 0.2, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 0.5, value: 0.4, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 10, value: 0.6, metric: .cpu))
+
+        let samples = histories.samples(for: .cpu)
+        let positiveTimestamps = samples.map(\.timestamp).filter { $0 > 0 }
+        return positiveTimestamps == [0.5]
+    }
+
+    private static func chartHistoryDensity() -> Bool {
+        var histories = MetricHistoryStore(
+            sampleInterval: 0.15,
+            retentionDuration: 65,
+            chartInterval: 1
+        )
+        for index in 0..<400 {
+            histories.ingest(
+                metricReading(
+                    timestamp: Double(index) * 0.15,
+                    value: Double(index % 10) / 10,
+                    metric: .cpu
+                )
+            )
+        }
+
+        let count = histories.samples(for: .cpu).count
+        return count >= 60 && count <= 68
+    }
+
     private static func independentMetricHistories() -> Bool {
         var histories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 1)
         histories.ingest(metricReading(timestamp: 0, value: 0.2, metric: .cpu))
         histories.ingest(metricReading(timestamp: 0, value: 0.7, metric: .memory))
         histories.ingest(metricReading(timestamp: 2, value: 0.3, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 3.1, value: 0.4, metric: .cpu))
 
         let cpu = histories.samples(for: .cpu)
         let memory = histories.samples(for: .memory)
         return cpu.last?.value == 0.3
-            && cpu.first?.timestamp == 0
+            && cpu.first?.timestamp == 2
             && memory.last?.value == 0.7
             && memory.last?.timestamp == 0
-            && histories.ingest(metricReading(timestamp: 2, value: 0.9, metric: .cpu)) == false
+            && histories.ingest(metricReading(timestamp: 3.1, value: 0.9, metric: .cpu)) == false
     }
 
     private static func dualHistoryRetention() -> Bool {
@@ -394,6 +510,24 @@ struct StatusDriverModelTests {
 
         return histories.samples(for: .cpu).count <= 602
             && histories.samples(for: .memory).count <= 602
+    }
+
+    private static func leftTerrainMarginRetention() -> Bool {
+        var histories = MetricHistoryStore(sampleInterval: 1, retentionDuration: 65)
+        for timestamp in 0...100 {
+            histories.ingest(
+                metricReading(
+                    timestamp: Double(timestamp),
+                    value: 0.5,
+                    metric: .cpu
+                )
+            )
+        }
+
+        guard let first = histories.samples(for: .cpu).first?.timestamp else { return false }
+        let visibleLeftTimestamp = 100.0 - 1.0 - 60.0
+        let margin = visibleLeftTimestamp - first
+        return first <= 35 && margin >= 5 && margin <= 6
     }
 
     private static func metricSelectionRules() -> Bool {

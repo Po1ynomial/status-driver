@@ -31,17 +31,19 @@ An application-owned session collects CPU and memory concurrently every 150 ms u
 
 CPU and memory each maintain independent calculation, availability, 0.75-second exponential moving average, and 60-second history. A read failure in one metric does not affect the other.
 
+Keep 150 ms readings for current values and detail data, but resample graph history into one-second buckets. Each closed bucket appends one immutable point containing the arithmetic mean of its filtered readings. Open-bucket values are never exposed to sparklines, drawing, or collision. Do not generate empty catch-up buckets after suspension or sampling gaps.
+
 Default launch uses genuine telemetry. Passing `--synthetic` creates two independent random channels and visibly marks the data as synthetic. Runtime failures never change source mode.
 
 ## Main graph and terrain
 
-The selected graph displays 60 seconds across its current width. Its left label says `60 seconds`; its right label says `0`. The rightmost visible value is the newest reading, so the graph and current percentage describe the same time.
+The selected graph displays a 60-second span across its current width with a fixed one-second commit horizon. Its left label says `61 seconds`; its right label says `1 second`. Historical terrain has about one immutable point per second. Current percentages still update at 150 ms and are intentionally newer than the committed graph.
 
-Remove the previous visible live-edge delay. Keep real history beyond the left edge. Add a hidden flat collision extension beyond the visible right edge at the latest selected value. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
+Move the viewport with source time minus one second. A bucket therefore finalizes offscreen right before any of its geometry enters view. Keep real history beyond both visible edges when available, then add a hidden flat collision extension after the newest finalized point. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
 
 The selected history produces the line, fill, and collision terrain from the same mapped points. CPU uses blue and Memory uses violet. The SpriteKit stroke retains butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear paths.
 
-Sidebar sparklines consume the same histories through lightweight SwiftUI drawing. They have no collision or vehicle nodes.
+Sidebar sparklines consume the same resampled histories through lightweight SwiftUI drawing. They have no collision or vehicle nodes.
 
 ## CPU detail
 
