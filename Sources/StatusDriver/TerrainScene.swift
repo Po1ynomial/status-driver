@@ -28,8 +28,8 @@ final class TerrainScene: SKScene {
     private let timelineClock = ContinuousClock()
     private let trackingCamera = SKCameraNode()
     private let gridNode = SKNode()
-    private let fillNode = SKShapeNode()
-    private let lineNode = SKShapeNode()
+    private var fillNode = SKShapeNode()
+    private var lineNode = SKShapeNode()
     private let collisionNode = SKNode()
 
     private lazy var histories = MetricHistoryStore(
@@ -43,16 +43,17 @@ final class TerrainScene: SKScene {
     private var latestReadingTimestamp: TimeInterval?
     private var latestReadingArrival: ContinuousClock.Instant?
     private var vehicleCreationFramesRemaining = 3
+    private var isDarkAppearance = false
     private var isConfigured = false
 
     override func didMove(to view: SKView) {
         guard !isConfigured else { return }
         isConfigured = true
 
-        backgroundColor = NSColor(red: 0.965, green: 0.945, blue: 0.89, alpha: 1)
         physicsWorld.gravity = CGVector(dx: 0, dy: -18)
 
         configureTerrainNodes()
+        applyGraphStyle()
         configureCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
@@ -117,6 +118,15 @@ final class TerrainScene: SKScene {
         }
     }
 
+    func applyAppearance(isDark: Bool) {
+        guard isDarkAppearance != isDark else { return }
+        isDarkAppearance = isDark
+        applyGraphStyle()
+        if isConfigured {
+            rebuildGrid()
+        }
+    }
+
     @discardableResult
     func selectMetric(_ metric: MetricIdentity) -> Bool {
         guard metric != selectedMetric, histories.samples(for: metric).count >= 2 else {
@@ -124,6 +134,7 @@ final class TerrainScene: SKScene {
         }
 
         selectedMetric = metric
+        applyGraphStyle()
         rebuildTerrain(rebuildCollisions: true)
         resetVehicle()
         view?.window?.makeFirstResponder(view)
@@ -162,12 +173,10 @@ final class TerrainScene: SKScene {
     }
 
     private func configureTerrainNodes() {
-        fillNode.fillColor = NSColor(red: 0.24, green: 0.42, blue: 0.37, alpha: 0.16)
         fillNode.strokeColor = .clear
         fillNode.zPosition = -2
         addChild(fillNode)
 
-        lineNode.strokeColor = NSColor(red: 0.105, green: 0.16, blue: 0.15, alpha: 1)
         lineNode.lineWidth = 4
         lineNode.lineCap = .butt
         lineNode.lineJoin = .bevel
@@ -176,6 +185,46 @@ final class TerrainScene: SKScene {
 
         collisionNode.name = "terrain-collision"
         addChild(collisionNode)
+    }
+
+    private func applyGraphStyle() {
+        let color: NSColor
+        switch (selectedMetric, isDarkAppearance) {
+        case (.cpu, false):
+            color = NSColor(red: 0.10, green: 0.48, blue: 0.76, alpha: 1)
+        case (.cpu, true):
+            color = NSColor(red: 0.30, green: 0.68, blue: 0.96, alpha: 1)
+        case (.memory, false):
+            color = NSColor(red: 0.53, green: 0.34, blue: 0.74, alpha: 1)
+        case (.memory, true):
+            color = NSColor(red: 0.72, green: 0.52, blue: 0.93, alpha: 1)
+        }
+
+        backgroundColor = isDarkAppearance
+            ? NSColor(red: 0.085, green: 0.095, blue: 0.11, alpha: 1)
+            : NSColor(red: 0.975, green: 0.978, blue: 0.97, alpha: 1)
+        lineNode.strokeColor = color
+        fillNode.fillColor = color.withAlphaComponent(isDarkAppearance ? 0.20 : 0.14)
+
+        // SpriteKit caches shape style state after first render, so replace only on style changes.
+        let linePath = lineNode.path
+        let fillPath = fillNode.path
+        lineNode.removeFromParent()
+        fillNode.removeFromParent()
+
+        fillNode = SKShapeNode(path: fillPath ?? CGMutablePath())
+        fillNode.fillColor = color.withAlphaComponent(isDarkAppearance ? 0.20 : 0.14)
+        fillNode.strokeColor = .clear
+        fillNode.zPosition = -2
+        addChild(fillNode)
+
+        lineNode = SKShapeNode(path: linePath ?? CGMutablePath())
+        lineNode.strokeColor = color
+        lineNode.lineWidth = 4
+        lineNode.lineCap = .butt
+        lineNode.lineJoin = .bevel
+        lineNode.zPosition = -1
+        addChild(lineNode)
     }
 
     private func configureCamera() {
@@ -304,7 +353,9 @@ final class TerrainScene: SKScene {
         }
 
         let lines = SKShapeNode(path: path)
-        lines.strokeColor = NSColor(red: 0.18, green: 0.25, blue: 0.23, alpha: 0.10)
+        lines.strokeColor = isDarkAppearance
+            ? NSColor(white: 1, alpha: 0.10)
+            : NSColor(white: 0, alpha: 0.09)
         lines.lineWidth = 1
         gridNode.addChild(lines)
     }

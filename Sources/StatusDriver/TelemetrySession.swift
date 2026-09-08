@@ -8,9 +8,15 @@ final class TelemetrySession: ObservableObject {
     @Published private(set) var selectedMetric: MetricIdentity = .cpu
     @Published private(set) var hardwareProfile: PerformanceHardwareProfile?
     @Published private(set) var systemActivity: SystemActivitySnapshot?
+    @Published private(set) var cpuHistory: [MetricSample] = []
+    @Published private(set) var memoryHistory: [MetricSample] = []
 
     let sourceMode: MetricSourceMode
     private var selection = MetricSelectionState()
+    private var interfaceHistories = MetricHistoryStore(
+        sampleInterval: 0.15,
+        retentionDuration: 60
+    )
     private var isRunning = false
 
     init(sourceMode: MetricSourceMode) {
@@ -22,6 +28,9 @@ final class TelemetrySession: ObservableObject {
         isRunning = true
         latestCPUReading = nil
         latestMemoryReading = nil
+        cpuHistory = []
+        memoryHistory = []
+        interfaceHistories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 60)
         hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
@@ -39,14 +48,23 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
-    func select(_ metric: MetricIdentity, in scene: TerrainScene) {
+    @discardableResult
+    func select(_ metric: MetricIdentity) -> Bool {
         let availability = reading(for: metric)?.availability ?? .unavailable
+        let hasHistory = switch metric {
+        case .cpu:
+            cpuHistory.count >= 2
+        case .memory:
+            memoryHistory.count >= 2
+        }
         var candidate = selection
-        guard candidate.select(metric, availability: availability),
-              scene.selectMetric(metric) else { return }
+        guard hasHistory, candidate.select(metric, availability: availability) else {
+            return false
+        }
 
         selection = candidate
         selectedMetric = candidate.selectedMetric
+        return true
     }
 
     private func consumeMetrics(scene: TerrainScene) async {
@@ -63,10 +81,10 @@ final class TelemetrySession: ObservableObject {
             if Task.isCancelled { break }
 
             if let reading = cpuStartupGate.consume(snapshot.cpu) {
-                scene.ingest(reading)
+                ingest(reading, into: scene)
             }
             if let reading = memoryStartupGate.consume(snapshot.memory) {
-                scene.ingest(reading)
+                ingest(reading, into: scene)
             }
             latestCPUReading = snapshot.cpu
             latestMemoryReading = snapshot.memory
@@ -77,6 +95,18 @@ final class TelemetrySession: ObservableObject {
         for await activity in makeSystemActivityStream() {
             if Task.isCancelled { break }
             systemActivity = activity
+        }
+    }
+
+    private func ingest(_ reading: MetricReading, into scene: TerrainScene) {
+        guard interfaceHistories.ingest(reading) else { return }
+        scene.ingest(reading)
+
+        switch reading.metric {
+        case .cpu:
+            cpuHistory = interfaceHistories.samples(for: .cpu)
+        case .memory:
+            memoryHistory = interfaceHistories.samples(for: .memory)
         }
     }
 }
