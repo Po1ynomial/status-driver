@@ -10,59 +10,60 @@ The initial audience is the project's owner. This is a personal, entertaining ma
 
 ## Current milestone
 
-Replace synthesized terrain with genuine aggregate CPU utilization while retaining synthetic mode for development. Sampling must continue independently of SpriteKit rendering, and a minimal annotation must identify the active source and current value.
+Add memory telemetry beside aggregate CPU and let the user select which metric becomes terrain. Both metrics remain live, filtered, and retained independently. Keep the interface to one compact selector rather than designing the full monitor.
 
 ## In scope
 
-- Aggregate system CPU utilization from unprivileged Mach host statistics.
-- A 150 ms application-owned asynchronous sample stream.
-- A short exponential moving average used by terrain and annotation.
-- Flat startup history derived from the first valid reading.
-- Explicit synthetic mode through `--synthetic`.
-- Visible source, value, and unavailable status.
+- Concurrent aggregate CPU and whole-system memory collection every 150 ms.
+- Reclaimability-aware used-memory estimation from Mach VM statistics and physical memory size.
+- Independent smoothing, availability, and rolling history for CPU and memory.
+- Mouse and `1`/`2` terrain selection.
+- Atomic terrain replacement and car reset when selection changes.
+- Dual-channel synthetic mode with a persistent `SYNTHETIC` marker.
 - Existing rolling terrain, driving, resize, and reset behavior.
 
 ## Out of scope for the current milestone
 
-- Per-core CPU data.
-- RAM, swap, memory pressure, process, disk, or network metrics.
+- Memory category breakdown in the interface.
+- Memory pressure state and swap display.
+- Per-core CPU, process, disk, or network metrics.
 - Persisted telemetry history.
-- Activity-monitor information hierarchy and finished monitor chrome.
+- Full activity-monitor information hierarchy and finished monitor chrome.
 - Scoring, timers, fuel, win states, objectives, or a game HUD.
 - Application bundling, code signing, notarization, or distribution.
 - Compatibility with Macs other than the owner's current machine.
 
 ## Constraints
 
-- CPU percentage means non-idle aggregate ticks divided by all aggregate ticks. Full saturation across all logical CPUs maps to `1.0`.
-- The application includes its own CPU use in the system total.
+- CPU percentage retains the accepted aggregate non-idle tick calculation.
+- Memory percentage is `(internal - purgeable + wired + compressor) / physical pages`, safely clamped to `0...1`.
+- File-backed cache, purgeable pages, and swap do not count as used physical memory.
+- CPU and memory collection, smoothing, availability, and retained history remain independent.
 - Sampling continues while SpriteKit rendering is throttled or occluded.
-- Failed telemetry reads never trigger a silent switch to synthetic data.
-- Drawing and collision geometry derive from the same filtered samples.
-- Terrain remains available outside both visible horizontal edges until the car resets.
+- Failed telemetry reads never trigger a silent source or terrain switch.
+- Drawing and collision geometry derive from the selected metric's same filtered samples.
 - Retained samples and scene geometry remain bounded.
 - The monitor remains the primary product as the project develops.
 
 ## Success conditions
 
-- `swift run StatusDriver` uses aggregate CPU data without a permission prompt or entitlement.
-- `swift run StatusDriver -- --synthetic` uses the bounded random source.
-- The application samples every 150 ms independently of SpriteKit rendering.
-- CPU utilization correctly handles cumulative tick deltas, counter rollover, and zero-delta intervals.
-- A roughly 0.75-second exponential moving average feeds terrain and the displayed percentage.
-- The first valid reading creates flat startup history and no data persists between launches.
-- The upper-left annotation shows `CPU n%`, `SYNTHETIC n%`, or `CPU unavailable`.
-- Failed reads reuse the last valid terrain value, retry automatically, and recover without changing source mode.
-- Automated checks cover tick math, rollover, zero deltas, smoothing, source selection, failure behavior, and cancellation.
-- Generating CPU load changes the graph and displayed percentage within about one second.
-- Occluding and restoring the window does not stop collection or cause unbounded catch-up work.
-- Existing scrolling, pruning, collision, driving, resizing, and reset behavior remain intact.
+- Default launch collects aggregate CPU and memory concurrently every 150 ms.
+- Both metrics apply independent time-aware smoothing with a roughly 0.75-second time constant.
+- The upper-left strip displays both values and clearly marks the selected terrain.
+- Clicking CPU or memory and pressing `1` or `2` change selection.
+- An unavailable unselected metric cannot be selected.
+- A selected metric that becomes unavailable remains selected, extends flat terrain, and resumes without an automatic switch or reset.
+- Switching metrics preserves viewport time, replaces drawing and collision atomically, and resets the car above window center.
+- `--synthetic` supplies two independent random channels and displays a persistent synthetic marker.
+- Automated checks cover VM calculation, clamping, smoothing, failure isolation, source selection, independent histories, and selection rules.
+- A live smoke check validates a current memory reading from Mach and `hw.memsize`.
+- Manual checks cover mouse and keyboard selection, synthetic labeling, car reset on switch, driving on both metrics, resizing, and bounded retention.
+- Existing CPU availability behavior and terrain rendering remain regression-free.
 
 ## Open questions
 
-- Which memory measurement should follow CPU, if any?
-- Which other system metrics belong in the monitor?
-- How should users select terrain when the monitor displays multiple metrics?
+- Which system metric should follow memory, if any?
+- What memory breakdown or pressure information belongs in the full monitor?
 - What information hierarchy and visual design should the full activity monitor use?
 - When, if ever, should the project add application packaging and distribution?
 
@@ -76,3 +77,5 @@ Replace synthesized terrain with genuine aggregate CPU utilization while retaini
 - [Use aggregate CPU utilization for genuine terrain](decisions/0006-aggregate-cpu-terrain.md)
 - [Own telemetry outside the rendering loop](decisions/0007-telemetry-stream-lifecycle.md)
 - [Identify telemetry without designing the full monitor](decisions/0008-telemetry-presentation-and-completion.md)
+- [Estimate reclaimability-aware used memory](decisions/0009-memory-telemetry.md)
+- [Select terrain from a compact metric strip](decisions/0010-metric-terrain-selection.md)

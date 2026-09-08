@@ -1,6 +1,6 @@
 # 0008 - Identify telemetry without designing the full monitor
 
-- **Status:** Accepted
+- **Status:** Accepted; single-metric annotation extended by [0010](0010-metric-terrain-selection.md)
 - **Date:** 2026-09-07
 
 ## Decision
@@ -8,6 +8,8 @@
 Add one small upper-left annotation fixed to the viewport. Show `CPU n%` for available filtered CPU readings, `SYNTHETIC n%` in explicit synthetic mode, and `CPU unavailable` while CPU reads fail.
 
 Defer all other activity-monitor interface design.
+
+[0010](0010-metric-terrain-selection.md) replaces this single-metric annotation with a compact CPU and memory selector while preserving the same minimal-interface intent.
 
 Require this evidence before telemetry integration is complete:
 

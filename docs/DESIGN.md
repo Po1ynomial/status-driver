@@ -4,21 +4,21 @@
 
 The application uses a native SwiftUI shell with an embedded SpriteKit scene. It remains a Swift Package Manager executable launched with `swift run`.
 
-SwiftUI owns the application lifecycle, telemetry session, source selection, and minimal metric annotation. SpriteKit owns curve rendering, keyboard input, vehicle simulation, and terrain collision. SpriteKit consumes metric readings but never calls Mach APIs or schedules telemetry collection.
+SwiftUI owns the application lifecycle, telemetry session, source selection, compact metric selector, and selected metric. SpriteKit owns curve rendering, keyboard driving input, vehicle simulation, and terrain collision. SpriteKit consumes filtered metric readings but never calls Mach APIs or schedules telemetry collection.
 
 The application targets the owner's current macOS 26.2 machine. It may use convenient current APIs and makes no backward-compatibility claim.
 
-## Streaming source boundary
+## Telemetry session
 
-An application-owned source emits normalized metric readings through an asynchronous stream. Each reading contains a monotonic session timestamp, a `Double` value in `0...1`, source identity, and availability state.
+An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the application session ends. Missed timer deadlines do not generate backfill readings.
 
-A `ContinuousClock` task samples every 150 ms. It starts once for the application session, continues while SpriteKit rendering is throttled or occluded, and cancels when the application session ends. The consumer does not backfill one reading per missed timer deadline. It resumes from the current clock instant, which bounds recovery work after suspension or sleep.
+CPU and memory each maintain independent acquisition state, availability, 0.75-second time-aware exponential moving average, and rolling history. A read failure in one metric does not affect the other.
 
-The default source reads aggregate CPU ticks. Passing `--synthetic` selects the bounded random source. Both sources implement the same streaming interface. No runtime failure silently changes the selected source.
+Default launch uses genuine telemetry. Passing `--synthetic` creates two independent bounded random channels and marks the interface as synthetic. Runtime failures never change source mode.
 
 ## CPU calculation
 
-Read cumulative user, system, idle, and nice ticks with `host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, ...)`. This call is unprivileged on the current machine.
+Read cumulative user, system, idle, and nice ticks with `host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, ...)`.
 
 For each pair of successful reads:
 
@@ -28,27 +28,45 @@ For each pair of successful reads:
 4. Divide busy by total and clamp to `0...1`.
 5. If no ticks advanced, reuse the last filtered value. Keep it available after at least one valid utilization; startup remains unavailable until a valid utilization exists.
 
-The result is whole-system utilization. A value of `1.0` means all logical CPUs are busy. Status Driver's own work remains part of that total.
+A value of `1.0` means all logical CPUs are busy. Status Driver's own work remains part of that total.
 
-Apply a time-aware exponential moving average with a target time constant of roughly 0.75 seconds. The filtered value feeds both terrain and the displayed percentage. Raw readings remain internal for possible later monitor work.
+## Memory calculation
+
+Read VM counters with `host_statistics64(mach_host_self(), HOST_VM_INFO64, ...)`. Read total physical bytes with `sysctlbyname("hw.memsize", ...)` and derive the physical page count from the host page size.
+
+Calculate a reclaimability-aware used-memory estimate:
+
+```text
+app pages = max(0, internal pages - purgeable pages)
+used pages = app pages + wired pages + compressor pages
+memory value = used pages / physical pages
+```
+
+Clamp arithmetic and the final value to `0...1`. File-backed cache and purgeable pages remain available to the system and do not count as used. Swap is not physical RAM and does not enter the percentage.
+
+This is a documented project metric, not a claim to reproduce Activity Monitor's private calculation exactly. Preserve raw VM fields in the internal reading so later monitor work can display a breakdown.
 
 ## Startup and failure behavior
 
-The first successful filtered CPU reading prefills the retained terrain window as a flat value. No telemetry persists between launches.
+Each metric starts with its first successful filtered value and prefills a flat retained history. No telemetry persists between launches.
 
-After a failed read, emit the last valid filtered value so terrain and collision stay continuous, but mark the reading unavailable. Before any successful read, use `0.5` as a neutral placeholder. Retry on every 150 ms interval and return to available status after the next successful calculation.
+After an actual source failure, the affected metric emits its last filtered value with unavailable status. Before any successful value, use `0.5` as a neutral fallback after a short grace period. Retry every interval.
 
-## Rolling terrain
+An unavailable unselected metric remains visible but cannot be selected. If the selected metric fails, keep it selected and extend flat terrain with its stale value. Recovery resumes genuine terrain without resetting the car or selecting another metric.
 
-The scene maps streamed samples to fixed horizontal intervals and a configured vertical range. It connects adjacent samples with straight line segments. Drawing and collision construction consume the same mapped points. The SpriteKit stroke uses butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear CPU paths.
+## Rolling histories and terrain
 
-The viewport advances smoothly with monotonic session time rather than jumping at sample boundaries. It trails the newest sample by a short fixed delay, leaving completed terrain beyond the right edge. Retention also keeps terrain beyond the left edge.
+CPU and memory have independent rolling sample buffers on one shared monotonic timeline. Both append and prune while either metric is selected.
 
-The viewport follows the live data window, not the car. Samples, drawing nodes, and collision geometry far enough behind the left margin are removed together. Retention remains bounded during an indefinite run.
+The selected buffer maps to fixed horizontal intervals and the scene's configured vertical range. Adjacent samples form straight segments. Drawing and collision construction consume the same mapped points. The SpriteKit stroke uses butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear CPU paths.
+
+The viewport advances smoothly with session time and trails newest samples by a short fixed delay. It follows the live data window, not the car. Retention keeps terrain outside both horizontal edges and remains bounded.
+
+Changing selection preserves viewport time and atomically replaces line, fill, and collision geometry from the new metric's existing history. The scene resets the car upright above terrain at window center. It does not morph between metrics.
 
 ## Vehicle
 
-The car consists of a small chassis and two physical wheels connected by pin joints. It is about 55 percent of the original prototype vehicle size. Wheel torque moves the car along the terrain. The chassis receives no direct control torque, so terrain contact and gravity determine its rotation.
+The car is a small chassis with two physical wheels connected by pin joints. Wheel torque moves it along terrain. Terrain contact and gravity determine chassis rotation.
 
 Controls are:
 
@@ -56,24 +74,22 @@ Controls are:
 - `Left` or `A`: brake rightward motion, then drive toward the left.
 - `R`: reset.
 
-`Up`, `Down`, `W`, and `S` are unbound. Vertical or rotation controls may return later with a matching arrow-key scheme.
+`Up`, `Down`, `W`, and `S` remain unbound.
 
-Reset removes the existing bodies and joints, then creates an upright vehicle above the terrain at the horizontal center of the current window. The scene invokes the same reset after the full car body leaves any viewport edge.
+## Presentation and selection
 
-## Presentation
+The upper-left strip shows both current percentages:
 
-The application uses a warm off-white background, a faint graph grid, a dark piecewise-linear curve with translucent fill below it, and one high-contrast orange car. It has no game objective or HUD.
+```text
+[ CPU 8% ] [ MEMORY 71% ]
+```
 
-A small annotation fixed at the upper-left identifies the metric and current filtered value:
+The selected item has the orange indicator and stronger border. Clicking an available item selects it. `1` selects CPU and `2` selects memory. An unavailable item says `CPU unavailable` or `MEMORY unavailable`.
 
-- `CPU n%` while live CPU readings are available.
-- `SYNTHETIC n%` in explicit synthetic mode.
-- `CPU unavailable` while the CPU source is failing.
-
-This annotation is the full interface scope for telemetry integration. Metric panels, controls, axes, legends, and multi-metric layout remain deferred.
+Synthetic mode adds a persistent `SYNTHETIC` marker while retaining the same two-item selector and shortcuts. This compact strip is the full GUI scope for the milestone.
 
 ## Inspection and checks
 
-The installed Command Line Tools lack a usable `Testing` or `XCTest` runtime, so `swift run StatusDriverModelTests` runs package-local automated checks. Telemetry checks cover tick delta math, counter rollover, zero-delta intervals, smoothing, source selection, unavailable-value reuse, recovery, and task cancellation.
+`swift run StatusDriverModelTests` covers CPU and memory calculations, arithmetic bounds, smoothing, failure isolation, source selection, startup, independent histories, selector rules, scheduling, cancellation, and live Mach reads.
 
-Manual inspection covers response to generated CPU load, source annotation, explicit synthetic mode, occlusion recovery, bounded retention, smooth scrolling, controls, resets, and resizing.
+Manual inspection covers both selector methods, atomic terrain replacement, car reset, unavailable behavior, synthetic labeling, driving on each metric, resizing, occlusion recovery, and bounded retention.
