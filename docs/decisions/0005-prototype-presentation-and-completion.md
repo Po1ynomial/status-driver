@@ -1,6 +1,6 @@
 # 0005 - Keep the prototype visually minimal and inspectable
 
-- **Status:** Accepted
+- **Status:** Accepted for the prototype; presentation superseded by [0011](0011-performance-interface-structure.md)
 - **Date:** 2026-09-07
 
 ## Decision

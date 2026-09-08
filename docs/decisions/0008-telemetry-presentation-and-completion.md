@@ -1,6 +1,6 @@
 # 0008 - Identify telemetry without designing the full monitor
 
-- **Status:** Accepted; single-metric annotation extended by [0010](0010-metric-terrain-selection.md)
+- **Status:** Accepted for telemetry integration; presentation superseded by [0010](0010-metric-terrain-selection.md) and [0011](0011-performance-interface-structure.md)
 - **Date:** 2026-09-07
 
 ## Decision
@@ -10,6 +10,8 @@ Add one small upper-left annotation fixed to the viewport. Show `CPU n%` for ava
 Defer all other activity-monitor interface design.
 
 [0010](0010-metric-terrain-selection.md) replaces this single-metric annotation with a compact CPU and memory selector while preserving the same minimal-interface intent.
+
+[0011](0011-performance-interface-structure.md) moves resource selection into a native Performance sidebar.
 
 Require this evidence before telemetry integration is complete:
 

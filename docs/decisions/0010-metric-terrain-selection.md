@@ -1,11 +1,13 @@
 # 0010 - Select terrain from a compact metric strip
 
-- **Status:** Accepted
+- **Status:** Accepted; compact-strip presentation superseded by [0011](0011-performance-interface-structure.md)
 - **Date:** 2026-09-07
 
 ## Decision
 
 Show CPU and memory in one compact upper-left strip. Update both values continuously and mark the selected terrain with an orange indicator and stronger border.
+
+[0011](0011-performance-interface-structure.md) moves these resources into a native sidebar. The selection, availability, history, switching, and synthetic-mode behavior below remains accepted.
 
 Clicking an available item selects it. `1` selects CPU and `2` selects memory. CPU is the default selection.
 

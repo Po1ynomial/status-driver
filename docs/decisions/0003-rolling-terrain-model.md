@@ -1,6 +1,6 @@
 # 0003 - Model terrain as a rolling sample stream
 
-- **Status:** Accepted
+- **Status:** Accepted; visible-delay detail superseded by [0013](0013-performance-graph-and-car.md)
 - **Date:** 2026-09-07
 - **Supersedes:** The deterministic synthetic-curve detail in [0001](0001-product-framing.md)
 
@@ -11,6 +11,8 @@ Model terrain as a rolling stream of normalized metric samples. Each sample carr
 Map samples to fixed horizontal intervals and connect them with straight line segments. Build the visible curve and collision edge from the same mapped points.
 
 Advance the viewport continuously with time. The viewport follows the live data window, not the car, and trails the newest sample by a short delay. Prefilled and retained samples provide collision terrain outside both horizontal screen edges. Remove old samples and their scene geometry beyond the far-left retention margin.
+
+[0013](0013-performance-graph-and-car.md) removes the visible delay for the full monitor graph and replaces right-side sampled terrain with a hidden flat collision extension.
 
 ## Rationale
 

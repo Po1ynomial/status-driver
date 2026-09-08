@@ -2,39 +2,68 @@
 
 ## Application structure
 
-The application uses a native SwiftUI shell with an embedded SpriteKit scene. It remains a Swift Package Manager executable launched with `swift run`.
+The application uses a native SwiftUI split view with one embedded SpriteKit graph. It remains a Swift Package Manager executable launched with `swift run`.
 
-SwiftUI owns the application lifecycle, telemetry session, source selection, compact metric selector, and selected metric. SpriteKit owns curve rendering, keyboard driving input, vehicle simulation, and terrain collision. SpriteKit consumes filtered metric readings but never calls Mach APIs or schedules telemetry collection.
+SwiftUI owns the window, sidebar, selected resource, telemetry session, detail labels, statistics, composition bar, and hardware metadata. SpriteKit owns only the selected main graph, terrain collision, keyboard input, and optional vehicle.
 
 The application targets the owner's current macOS 26.2 machine. It may use convenient current APIs and makes no backward-compatibility claim.
 
+## Performance layout
+
+The Windows Task Manager Performance page is the structural reference. Status Driver opens directly into the Performance view because no other section has implemented content.
+
+The native macOS sidebar contains two rows:
+
+- CPU with a blue 60-second sparkline and current utilization.
+- Memory with a violet 60-second sparkline and used, total, and percentage summary.
+
+CPU is selected by default. Clicking a row or pressing `1` or `2` changes the selected resource and terrain. Do not add placeholder rows for unimplemented resources.
+
+The detail pane has the selected resource title, a hardware summary aligned at the upper-right, one large graph, and Task Manager-style statistics below. Memory adds a composition bar between its graph and statistics.
+
+Use a unified macOS title bar, native sidebar material and selection, SF typography, monospaced changing values, separator-derived graph borders and grid, and automatic light and dark appearance. CPU is blue, Memory is violet, and the car remains orange.
+
+The sidebar starts around 220 points wide, resizes provisionally between 190 and 280 points, and supports standard macOS collapse behavior. The default window remains about `1200 x 700` with a provisional minimum around `900 x 600`.
+
 ## Telemetry session
 
-An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the application session ends. Missed timer deadlines do not generate backfill readings.
+An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the session ends. Missed timer deadlines do not generate backfill readings.
 
-CPU and memory each maintain independent acquisition state, availability, 0.75-second time-aware exponential moving average, and rolling history. A read failure in one metric does not affect the other.
+CPU and memory each maintain independent calculation, availability, 0.75-second exponential moving average, and 60-second history. A read failure in one metric does not affect the other.
 
-Default launch uses genuine telemetry. Passing `--synthetic` creates two independent bounded random channels and marks the interface as synthetic. Runtime failures never change source mode.
+Default launch uses genuine telemetry. Passing `--synthetic` creates two independent random channels and visibly marks the data as synthetic. Runtime failures never change source mode.
 
-## CPU calculation
+## Main graph and terrain
 
-Read cumulative user, system, idle, and nice ticks with `host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, ...)`.
+The selected graph displays 60 seconds across its current width. Its left label says `60 seconds`; its right label says `0`. The rightmost visible value is the newest reading, so the graph and current percentage describe the same time.
 
-For each pair of successful reads:
+Remove the previous visible live-edge delay. Keep real history beyond the left edge. Add a hidden flat collision extension beyond the visible right edge at the latest selected value. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
 
-1. Compute wrapping deltas for all four counters.
-2. Add user, system, and nice deltas as busy ticks.
-3. Add busy and idle deltas as total ticks.
-4. Divide busy by total and clamp to `0...1`.
-5. If no ticks advanced, reuse the last filtered value. Keep it available after at least one valid utilization; startup remains unavailable until a valid utilization exists.
+The selected history produces the line, fill, and collision terrain from the same mapped points. CPU uses blue and Memory uses violet. The SpriteKit stroke retains butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear paths.
 
-A value of `1.0` means all logical CPUs are busy. Status Driver's own work remains part of that total.
+Sidebar sparklines consume the same histories through lightweight SwiftUI drawing. They have no collision or vehicle nodes.
 
-## Memory calculation
+## CPU detail
 
-Read VM counters with `host_statistics64(mach_host_self(), HOST_VM_INFO64, ...)`. Read total physical bytes with `sysctlbyname("hw.memsize", ...)` and derive the physical page count from the host page size.
+CPU utilization remains aggregate non-idle Mach tick deltas over all logical CPUs. Successful zero-delta snapshots reuse the last valid value. Actual read failures preserve the stale value with unavailable status.
 
-Calculate a reclaimability-aware used-memory estimate:
+Load this hardware metadata once:
+
+- Chip name.
+- Package count.
+- Physical and logical processor counts.
+- Performance and efficiency core counts when performance levels exist.
+- Virtualization support from `kern.hv_support`.
+- Per-performance-level L1 instruction, L1 data, and L2 cache sizes.
+- L3 only when exposed.
+
+Refresh process count, best-effort aggregate thread count, and uptime once per second. Process enumeration uses public libproc data. A missing secondary value displays an em dash without changing CPU terrain availability.
+
+Do not display current speed, base speed, handles, or cache levels the system does not expose.
+
+## Memory detail
+
+Memory retains the accepted calculation:
 
 ```text
 app pages = max(0, internal pages - purgeable pages)
@@ -42,54 +71,48 @@ used pages = app pages + wired pages + compressor pages
 memory value = used pages / physical pages
 ```
 
-Clamp arithmetic and the final value to `0...1`. File-backed cache and purgeable pages remain available to the system and do not count as used. Swap is not physical RAM and does not enter the percentage.
+Raw VM details update with each 150 ms memory snapshot and provide:
 
-This is a documented project metric, not a claim to reproduce Activity Monitor's private calculation exactly. Preserve raw VM fields in the internal reading so later monitor work can display a breakdown.
+- Installed physical memory.
+- In use from the accepted estimate.
+- Available as installed minus in use.
+- App memory.
+- Wired memory.
+- Compressed memory.
+- File cache from file-backed pages.
+- Unified-memory type on Apple silicon.
 
-## Startup and failure behavior
+The composition bar partitions physical memory into app, wired, compressed, and available remainder. File cache is a separate value because it belongs within reclaimable available memory.
 
-Each metric starts with its first successful filtered value and prefills a flat retained history. No telemetry persists between launches.
+Do not display committed memory, paged pool, non-paged pool, speed, slots, hardware reserved, memory pressure, or swap in this milestone.
 
-After an actual source failure, the affected metric emits its last filtered value with unavailable status. Before any successful value, use `0.5` as a neutral fallback after a short grace period. Retry every interval.
+## Refresh tiers
 
-An unavailable unselected metric remains visible but cannot be selected. If the selected metric fails, keep it selected and extend flat terrain with its stale value. Recovery resumes genuine terrain without resetting the car or selecting another metric.
+- CPU, Memory, raw VM fields, main graph, and sparklines update every 150 ms.
+- Processes, best-effort threads, and uptime update once per second.
+- Hardware metadata loads once per application session.
 
-## Rolling histories and terrain
+Slow or failed secondary data never blocks graph sampling and only blanks its own field.
 
-CPU and memory have independent rolling sample buffers on one shared monotonic timeline. Both append and prune while either metric is selected.
+## Vehicle easter egg
 
-The selected buffer maps to fixed horizontal intervals and the scene's configured vertical range. Adjacent samples form straight segments. Drawing and collision construction consume the same mapped points. The SpriteKit stroke uses butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear CPU paths.
+The car is hidden by default on every launch. There is no visible help, hint, toolbar item, tooltip, or first-run message for driving.
 
-The viewport advances smoothly with session time and trails newest samples by a short fixed delay. It follows the live data window, not the car. Retention keeps terrain outside both horizontal edges and remains bounded.
+Pressing `C` creates the car above the selected terrain at graph center. Pressing `C` again removes its chassis, wheels, joints, and physics state. Driving and reset input have no effect while it is absent. Showing it after a selection change uses the current terrain.
 
-Changing selection preserves viewport time and atomically replaces line, fill, and collision geometry from the new metric's existing history. The scene resets the car upright above terrain at window center. It does not morph between metrics.
+Existing hidden controls remain:
 
-## Vehicle
-
-The car is a small chassis with two physical wheels connected by pin joints. Wheel torque moves it along terrain. Terrain contact and gravity determine chassis rotation.
-
-Controls are:
-
-- `Right` or `D`: drive toward the right.
-- `Left` or `A`: brake rightward motion, then drive toward the left.
+- `Right` or `D`: drive right.
+- `Left` or `A`: brake rightward movement, then drive left.
 - `R`: reset.
+- `1`: select CPU.
+- `2`: select Memory.
+- `C`: toggle the car.
 
-`Up`, `Down`, `W`, and `S` remain unbound.
-
-## Presentation and selection
-
-The upper-left strip shows both current percentages:
-
-```text
-[ CPU 8% ] [ MEMORY 71% ]
-```
-
-The selected item has the orange indicator and stronger border. Clicking an available item selects it. `1` selects CPU and `2` selects memory. An unavailable item says `CPU unavailable` or `MEMORY unavailable`.
-
-Synthetic mode adds a persistent `SYNTHETIC` marker while retaining the same two-item selector and shortcuts. This compact strip is the full GUI scope for the milestone.
+Selection and graph-geometry changes reset a visible car. A hidden car remains hidden. Automatic offscreen reset uses the graph rectangle, not the application window. Clicking the graph restores keyboard focus after sidebar interaction.
 
 ## Inspection and checks
 
-`swift run StatusDriverModelTests` covers CPU and memory calculations, arithmetic bounds, smoothing, failure isolation, source selection, startup, independent histories, selector rules, scheduling, cancellation, and live Mach reads.
+`swift run StatusDriverModelTests` covers telemetry calculations, hardware and secondary detail parsing, partial failures, independent histories, 60-second chart mapping, selection, hidden collision extension, vehicle visibility state, scheduling, cancellation, and live system reads.
 
-Manual inspection covers both selector methods, atomic terrain replacement, car reset, unavailable behavior, synthetic labeling, driving on each metric, resizing, occlusion recovery, and bounded retention.
+Manual inspection covers CPU and Memory pages, sidebar sparklines and collapse, both appearances, current-time graph labels, detail values, Memory composition, resize behavior, selection, telemetry failure isolation, and the hidden car lifecycle and controls.
