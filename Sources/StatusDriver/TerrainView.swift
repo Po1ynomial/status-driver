@@ -18,67 +18,139 @@ struct TerrainView: View {
             SpriteKitView(scene: scene)
                 .frame(minWidth: 720, minHeight: 440)
 
-            MetricAnnotation(
-                reading: telemetry.latestReading,
+            MetricSelector(
+                cpu: telemetry.latestCPUReading,
+                memory: telemetry.latestMemoryReading,
+                selectedMetric: telemetry.selectedMetric,
                 sourceMode: telemetry.sourceMode
-            )
+            ) { metric in
+                telemetry.select(metric, in: scene)
+            }
             .padding(18)
-            .allowsHitTesting(false)
         }
         .task {
+            scene.onMetricSelectionRequest = { [weak telemetry, weak scene] metric in
+                guard let telemetry, let scene else { return }
+                telemetry.select(metric, in: scene)
+            }
+            defer { scene.onMetricSelectionRequest = nil }
             await telemetry.run(scene: scene)
         }
     }
 }
 
-private struct MetricAnnotation: View {
-    let reading: MetricReading?
+private struct MetricSelector: View {
+    let cpu: MetricReading?
+    let memory: MetricReading?
+    let selectedMetric: MetricIdentity
     let sourceMode: MetricSourceMode
+    let onSelect: (MetricIdentity) -> Void
 
     var body: some View {
-        HStack(spacing: 9) {
-            Circle()
-                .fill(indicatorColor)
-                .frame(width: 7, height: 7)
-            Text(label)
-                .font(.custom("Avenir Next Condensed Demi Bold", size: 16))
-                .tracking(0.8)
+        HStack(spacing: 6) {
+            if sourceMode == .synthetic {
+                Text("SYNTHETIC")
+                    .font(.custom("Avenir Next Condensed Demi Bold", size: 12))
+                    .tracking(1.1)
+                    .foregroundStyle(ink.opacity(0.72))
+                    .padding(.horizontal, 8)
+            }
+
+            MetricButton(
+                metric: .cpu,
+                reading: cpu,
+                isSelected: selectedMetric == .cpu,
+                onSelect: onSelect
+            )
+            MetricButton(
+                metric: .memory,
+                reading: memory,
+                isSelected: selectedMetric == .memory,
+                onSelect: onSelect
+            )
         }
-        .foregroundStyle(Color(red: 0.105, green: 0.16, blue: 0.15))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            Color(red: 0.965, green: 0.945, blue: 0.89)
-                .opacity(0.92),
-            in: RoundedRectangle(cornerRadius: 7)
-        )
+        .padding(5)
+        .background(paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 9))
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(Color(red: 0.105, green: 0.16, blue: 0.15).opacity(0.22))
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(ink.opacity(0.16))
         }
+    }
+
+    private var ink: Color {
+        Color(red: 0.105, green: 0.16, blue: 0.15)
+    }
+
+    private var paper: Color {
+        Color(red: 0.965, green: 0.945, blue: 0.89)
+    }
+}
+
+private struct MetricButton: View {
+    let metric: MetricIdentity
+    let reading: MetricReading?
+    let isSelected: Bool
+    let onSelect: (MetricIdentity) -> Void
+
+    var body: some View {
+        Button {
+            onSelect(metric)
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(indicatorColor)
+                    .frame(width: 7, height: 7)
+                Text(label)
+                    .font(.custom("Avenir Next Condensed Demi Bold", size: 15))
+                    .tracking(0.65)
+            }
+            .foregroundStyle(ink.opacity(isAvailable || isSelected ? 1 : 0.48))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                isSelected ? orange.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(
+                        isSelected ? orange.opacity(0.82) : ink.opacity(0.10),
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isAvailable)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var label: String {
-        switch (sourceMode, reading?.availability) {
-        case (.live, .some(.available)):
-            "CPU \(percentage)%"
-        case (.live, _):
-            "CPU unavailable"
-        case (.synthetic, _):
-            "SYNTHETIC \(percentage)%"
-        }
+        let name = metric == .cpu ? "CPU" : "MEMORY"
+        guard isAvailable else { return "\(name) unavailable" }
+        let percentage = Int(((reading?.value ?? 0.5) * 100).rounded())
+        return "\(name) \(percentage)%"
     }
 
-    private var percentage: Int {
-        Int(((reading?.value ?? 0.5) * 100).rounded())
+    private var isAvailable: Bool {
+        reading?.availability == .available
     }
 
     private var indicatorColor: Color {
-        if sourceMode == .live, reading?.availability != .available {
-            return Color(red: 0.78, green: 0.24, blue: 0.12)
-        }
-        return Color(red: 0.95, green: 0.31, blue: 0.08)
+        if !isAvailable { return warning }
+        return isSelected ? orange : ink.opacity(0.38)
+    }
+
+    private var ink: Color {
+        Color(red: 0.105, green: 0.16, blue: 0.15)
+    }
+
+    private var orange: Color {
+        Color(red: 0.95, green: 0.31, blue: 0.08)
+    }
+
+    private var warning: Color {
+        Color(red: 0.78, green: 0.24, blue: 0.12)
     }
 }
 

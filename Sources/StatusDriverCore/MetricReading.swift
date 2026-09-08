@@ -1,6 +1,6 @@
 import Foundation
 
-package enum MetricIdentity: String, Equatable, Sendable {
+package enum MetricIdentity: String, Equatable, Hashable, Sendable {
     case cpu
     case memory
 }

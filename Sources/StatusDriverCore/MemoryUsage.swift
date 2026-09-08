@@ -33,13 +33,51 @@ package protocol MemoryStatisticsReader: Sendable {
     func readStatistics() async -> Result<MemoryStatistics, MemoryReadError>
 }
 
-package struct MachMemoryStatisticsReader: MemoryStatisticsReader {
+package actor MachMemoryStatisticsReader: MemoryStatisticsReader {
+    private var cachedPhysicalPages: UInt64?
+
     package init() {}
 
-    package func readStatistics() async -> Result<MemoryStatistics, MemoryReadError> {
-        let host = mach_host_self()
+    package func readStatistics() -> Result<MemoryStatistics, MemoryReadError> {
+        let physicalPages: UInt64
+        switch resolvePhysicalPages() {
+        case let .success(value):
+            physicalPages = value
+        case let .failure(error):
+            return .failure(error)
+        }
+
+        var info = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, rebound, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else {
+            return .failure(.kernel(result))
+        }
+
+        return .success(
+            MemoryStatistics(
+                internalPages: UInt64(info.internal_page_count),
+                purgeablePages: UInt64(info.purgeable_count),
+                wiredPages: UInt64(info.wire_count),
+                compressorPages: UInt64(info.compressor_page_count),
+                physicalPages: physicalPages
+            )
+        )
+    }
+
+    private func resolvePhysicalPages() -> Result<UInt64, MemoryReadError> {
+        if let cachedPhysicalPages {
+            return .success(cachedPhysicalPages)
+        }
+
         var pageSize: vm_size_t = 0
-        let pageSizeResult = host_page_size(host, &pageSize)
+        let pageSizeResult = host_page_size(mach_host_self(), &pageSize)
         guard pageSizeResult == KERN_SUCCESS else {
             return .failure(.kernel(pageSizeResult))
         }
@@ -53,28 +91,12 @@ package struct MachMemoryStatisticsReader: MemoryStatisticsReader {
             return .failure(.sysctl(errno))
         }
 
-        var info = vm_statistics64_data_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size
-        )
-        let statisticsResult = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-                host_statistics64(host, HOST_VM_INFO64, rebound, &count)
-            }
+        let physicalPages = physicalBytes / UInt64(pageSize)
+        guard physicalPages > 0 else {
+            return .failure(.invalidPageSize)
         }
-        guard statisticsResult == KERN_SUCCESS else {
-            return .failure(.kernel(statisticsResult))
-        }
-
-        return .success(
-            MemoryStatistics(
-                internalPages: UInt64(info.internal_page_count),
-                purgeablePages: UInt64(info.purgeable_count),
-                wiredPages: UInt64(info.wire_count),
-                compressorPages: UInt64(info.compressor_page_count),
-                physicalPages: physicalBytes / UInt64(pageSize)
-            )
-        )
+        cachedPhysicalPages = physicalPages
+        return .success(physicalPages)
     }
 }
 

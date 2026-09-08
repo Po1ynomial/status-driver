@@ -28,6 +28,10 @@ struct StatusDriverModelTests {
             ("memory failure recovery", memoryFailureRecovery),
             ("metric failure isolation", metricFailureIsolation),
             ("dual synthetic channels", dualSyntheticChannels),
+            ("independent metric histories", { independentMetricHistories() }),
+            ("dual history retention", { dualHistoryRetention() }),
+            ("metric selection rules", { metricSelectionRules() }),
+            ("metric selection key map", { metricSelectionKeyMap() }),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
@@ -318,6 +322,57 @@ struct StatusDriverModelTests {
             && snapshot.memory.availability == .available
             && snapshot.cpu.value < 0.4
             && snapshot.memory.value > 0.6
+    }
+
+    private static func independentMetricHistories() -> Bool {
+        var histories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 1)
+        histories.ingest(metricReading(timestamp: 0, value: 0.2, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 0, value: 0.7, metric: .memory))
+        histories.ingest(metricReading(timestamp: 2, value: 0.3, metric: .cpu))
+
+        let cpu = histories.samples(for: .cpu)
+        let memory = histories.samples(for: .memory)
+        return cpu.last?.value == 0.3
+            && cpu.first?.timestamp == 0
+            && memory.last?.value == 0.7
+            && memory.last?.timestamp == 0
+            && histories.ingest(metricReading(timestamp: 2, value: 0.9, metric: .cpu)) == false
+    }
+
+    private static func dualHistoryRetention() -> Bool {
+        var histories = MetricHistoryStore(sampleInterval: 0.1, retentionDuration: 60)
+        for index in 0..<10_000 {
+            let timestamp = Double(index) * 0.1
+            histories.ingest(metricReading(timestamp: timestamp, value: 0.2, metric: .cpu))
+            histories.ingest(metricReading(timestamp: timestamp, value: 0.7, metric: .memory))
+        }
+
+        return histories.samples(for: .cpu).count <= 602
+            && histories.samples(for: .memory).count <= 602
+    }
+
+    private static func metricSelectionRules() -> Bool {
+        var selection = MetricSelectionState()
+        let rejectsCurrent = !selection.select(.cpu, availability: .available)
+        let rejectsUnavailable = !selection.select(.memory, availability: .unavailable)
+        let selectsMemory = selection.select(.memory, availability: .available)
+        let rejectsUnavailableSwitch = !selection.select(.cpu, availability: .unavailable)
+        let remainsSelectedWhenUnavailable = selection.selectedMetric == .memory
+        let selectsCPU = selection.select(.cpu, availability: .available)
+
+        return rejectsCurrent
+            && rejectsUnavailable
+            && selectsMemory
+            && rejectsUnavailableSwitch
+            && remainsSelectedWhenUnavailable
+            && selectsCPU
+            && selection.selectedMetric == .cpu
+    }
+
+    private static func metricSelectionKeyMap() -> Bool {
+        metricSelection(forKeyCode: 18) == .cpu
+            && metricSelection(forKeyCode: 19) == .memory
+            && metricSelection(forKeyCode: 20) == nil
     }
 
     private static func sourceSelection() -> Bool {

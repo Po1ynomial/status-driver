@@ -4,6 +4,8 @@ import StatusDriverCore
 
 @MainActor
 final class TerrainScene: SKScene {
+    var onMetricSelectionRequest: ((MetricIdentity) -> Void)?
+
     private struct Configuration {
         let sampleInterval: TimeInterval = 0.15
         let pointsPerSecond: CGFloat = 120
@@ -30,7 +32,11 @@ final class TerrainScene: SKScene {
     private let lineNode = SKShapeNode()
     private let collisionNode = SKNode()
 
-    private var sampleBuffer = RollingSampleBuffer()
+    private lazy var histories = MetricHistoryStore(
+        sampleInterval: configuration.sampleInterval,
+        retentionDuration: configuration.retentionDuration
+    )
+    private var selectedMetric: MetricIdentity = .cpu
     private var vehicle: Vehicle?
     private var pressedControls: Set<DrivingControl> = []
     private var elapsedTime: TimeInterval = 0
@@ -100,32 +106,38 @@ final class TerrainScene: SKScene {
     }
 
     func ingest(_ reading: MetricReading) {
-        guard sampleBuffer.samples.last.map({ reading.timestamp > $0.timestamp }) ?? true else {
-            return
-        }
+        guard histories.ingest(reading) else { return }
 
-        if sampleBuffer.samples.isEmpty {
-            sampleBuffer.prefill(
-                endingAt: reading.timestamp,
-                value: reading.value,
-                interval: configuration.sampleInterval,
-                duration: configuration.retentionDuration
-            )
-        } else {
-            sampleBuffer.append(reading.sample)
-            sampleBuffer.prune(before: reading.timestamp - configuration.retentionDuration)
-        }
-
-        latestReadingTimestamp = reading.timestamp
+        latestReadingTimestamp = max(latestReadingTimestamp ?? reading.timestamp, reading.timestamp)
         latestReadingArrival = timelineClock.now
         elapsedTime = max(elapsedTime, reading.timestamp)
 
-        if isConfigured {
+        if isConfigured, reading.metric == selectedMetric {
             rebuildTerrain(rebuildCollisions: true)
         }
     }
 
+    @discardableResult
+    func selectMetric(_ metric: MetricIdentity) -> Bool {
+        guard metric != selectedMetric, histories.samples(for: metric).count >= 2 else {
+            return false
+        }
+
+        selectedMetric = metric
+        rebuildTerrain(rebuildCollisions: true)
+        resetVehicle()
+        view?.window?.makeFirstResponder(view)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
+        if let metric = metricSelection(forKeyCode: event.keyCode) {
+            if !event.isARepeat {
+                onMetricSelectionRequest?(metric)
+            }
+            return
+        }
+
         guard let input = drivingInput(forKeyCode: event.keyCode) else { return }
 
         switch input {
@@ -197,7 +209,7 @@ final class TerrainScene: SKScene {
 
     private func terrainGeometry(sceneHeight: CGFloat) -> TerrainGeometry {
         TerrainGeometry(
-            samples: sampleBuffer.samples,
+            samples: histories.samples(for: selectedMetric),
             layout: configuration.layout,
             sceneHeight: sceneHeight
         )
@@ -229,7 +241,7 @@ final class TerrainScene: SKScene {
     }
 
     private func createVehicleAfterLayoutSettles() {
-        guard vehicle == nil, sampleBuffer.samples.count >= 2 else { return }
+        guard vehicle == nil, histories.samples(for: selectedMetric).count >= 2 else { return }
         guard vehicleCreationFramesRemaining == 0 else {
             vehicleCreationFramesRemaining -= 1
             return
