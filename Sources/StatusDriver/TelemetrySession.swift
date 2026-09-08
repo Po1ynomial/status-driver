@@ -6,6 +6,8 @@ final class TelemetrySession: ObservableObject {
     @Published private(set) var latestCPUReading: MetricReading?
     @Published private(set) var latestMemoryReading: MetricReading?
     @Published private(set) var selectedMetric: MetricIdentity = .cpu
+    @Published private(set) var hardwareProfile: PerformanceHardwareProfile?
+    @Published private(set) var systemActivity: SystemActivitySnapshot?
 
     let sourceMode: MetricSourceMode
     private var selection = MetricSelectionState()
@@ -20,8 +22,34 @@ final class TelemetrySession: ObservableObject {
         isRunning = true
         latestCPUReading = nil
         latestMemoryReading = nil
+        hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
+        async let activityResult: Void = consumeSystemActivity()
+        await consumeMetrics(scene: scene)
+        _ = await activityResult
+    }
+
+    func reading(for metric: MetricIdentity) -> MetricReading? {
+        switch metric {
+        case .cpu:
+            latestCPUReading
+        case .memory:
+            latestMemoryReading
+        }
+    }
+
+    func select(_ metric: MetricIdentity, in scene: TerrainScene) {
+        let availability = reading(for: metric)?.availability ?? .unavailable
+        var candidate = selection
+        guard candidate.select(metric, availability: availability),
+              scene.selectMetric(metric) else { return }
+
+        selection = candidate
+        selectedMetric = candidate.selectedMetric
+    }
+
+    private func consumeMetrics(scene: TerrainScene) async {
         let producer: any MetricSnapshotProducer = switch sourceMode {
         case .live:
             ConcurrentMetricSnapshotProducer()
@@ -45,22 +73,10 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
-    func reading(for metric: MetricIdentity) -> MetricReading? {
-        switch metric {
-        case .cpu:
-            latestCPUReading
-        case .memory:
-            latestMemoryReading
+    private func consumeSystemActivity() async {
+        for await activity in makeSystemActivityStream() {
+            if Task.isCancelled { break }
+            systemActivity = activity
         }
-    }
-
-    func select(_ metric: MetricIdentity, in scene: TerrainScene) {
-        let availability = reading(for: metric)?.availability ?? .unavailable
-        var candidate = selection
-        guard candidate.select(metric, availability: availability),
-              scene.selectMetric(metric) else { return }
-
-        selection = candidate
-        selectedMetric = candidate.selectedMetric
     }
 }

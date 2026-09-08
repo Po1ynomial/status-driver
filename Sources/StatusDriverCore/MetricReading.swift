@@ -10,22 +10,29 @@ package enum MetricAvailability: Equatable, Sendable {
     case unavailable
 }
 
+package enum MetricReadingDetails: Equatable, Sendable {
+    case memory(MemoryDetails)
+}
+
 package struct MetricReading: Equatable, Sendable {
     package let timestamp: TimeInterval
     package let value: Double
     package let metric: MetricIdentity
     package let availability: MetricAvailability
+    package let details: MetricReadingDetails?
 
     package init(
         timestamp: TimeInterval,
         value: Double,
         metric: MetricIdentity,
-        availability: MetricAvailability
+        availability: MetricAvailability,
+        details: MetricReadingDetails? = nil
     ) {
         self.timestamp = timestamp
         self.value = value.isFinite ? min(max(value, 0), 1) : 0
         self.metric = metric
         self.availability = availability
+        self.details = details
     }
 
     package var sample: MetricSample {

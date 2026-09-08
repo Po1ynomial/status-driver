@@ -24,6 +24,7 @@ struct StatusDriverModelTests {
             ("metric smoothing", { metricSmoothing() }),
             ("CPU zero-delta and failure recovery", cpuFailureRecovery),
             ("memory utilization", { memoryUtilization() }),
+            ("memory detail calculation", { memoryDetailCalculation() }),
             ("memory arithmetic bounds", { memoryArithmeticBounds() }),
             ("memory failure recovery", memoryFailureRecovery),
             ("metric failure isolation", metricFailureIsolation),
@@ -36,8 +37,13 @@ struct StatusDriverModelTests {
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
             ("stream cancellation", streamCancellation),
+            ("hardware profile mapping", hardwareProfileMapping),
+            ("partial hardware profile", partialHardwareProfile),
+            ("secondary activity stream", secondaryActivityStream),
             ("live Mach CPU sample", liveMachCPUSample),
             ("live Mach memory sample", liveMachMemorySample),
+            ("live hardware profile", liveHardwareProfile),
+            ("live system activity", liveSystemActivity),
         ]
 
         var failures = 0
@@ -238,6 +244,34 @@ struct StatusDriverModelTests {
         return MemoryUsageCalculator.utilization(from: statistics) == 0.8
     }
 
+    private static func memoryDetailCalculation() -> Bool {
+        let statistics = MemoryStatistics(
+            internalPages: 600,
+            purgeablePages: 100,
+            wiredPages: 200,
+            compressorPages: 100,
+            externalPages: 150,
+            physicalPages: 1_000,
+            pageSizeBytes: 4_096
+        )
+        guard let usage = MemoryUsageCalculator.calculate(from: statistics) else { return false }
+        let details = usage.details
+
+        return usage.utilization == 0.8
+            && details.statistics == statistics
+            && details.installedBytes == 4_096_000
+            && details.inUseBytes == 3_276_800
+            && details.availableBytes == 819_200
+            && details.appBytes == 2_048_000
+            && details.wiredBytes == 819_200
+            && details.compressedBytes == 409_600
+            && details.fileCacheBytes == 614_400
+            && details.appFraction == 0.5
+            && details.wiredFraction == 0.2
+            && details.compressedFraction == 0.1
+            && details.availableFraction == 0.2
+    }
+
     private static func memoryArithmeticBounds() -> Bool {
         let purgeableExceedsInternal = MemoryStatistics(
             internalPages: 50,
@@ -261,8 +295,17 @@ struct StatusDriverModelTests {
             physicalPages: 0
         )
 
+        let overflowingUsage = MemoryUsageCalculator.calculate(from: overflowing)
+        let compositionTotal = overflowingUsage.map {
+            $0.details.appFraction
+                + $0.details.wiredFraction
+                + $0.details.compressedFraction
+                + $0.details.availableFraction
+        }
+
         return MemoryUsageCalculator.utilization(from: purgeableExceedsInternal) == 0.15
-            && MemoryUsageCalculator.utilization(from: overflowing) == 1
+            && overflowingUsage?.utilization == 1
+            && compositionTotal == 1
             && MemoryUsageCalculator.utilization(from: noMemory) == nil
     }
 
@@ -281,8 +324,10 @@ struct StatusDriverModelTests {
         return live.metric == .memory
             && live.availability == .available
             && live.value == 0.8
+            && live.details != nil
             && failed.availability == .unavailable
             && failed.value == live.value
+            && failed.details == live.details
             && recovered.availability == .available
             && recovered.value < live.value
             && recovered.value > 0.6
@@ -443,6 +488,81 @@ struct StatusDriverModelTests {
         return await waitUntil({ await clock.wasCancelled })
     }
 
+    private static func hardwareProfileMapping() async -> Bool {
+        let sysctl = DictionarySysctlReader(
+            strings: [
+                "machdep.cpu.brand_string": "Example CPU",
+                "hw.perflevel0.name": "Performance",
+                "hw.perflevel1.name": "Efficiency",
+            ],
+            integers: [
+                "hw.packages": 1,
+                "hw.physicalcpu": 10,
+                "hw.logicalcpu": 10,
+                "hw.nperflevels": 2,
+                "hw.perflevel0.physicalcpu": 4,
+                "hw.perflevel0.logicalcpu": 4,
+                "hw.perflevel0.l1icachesize": 192,
+                "hw.perflevel0.l1dcachesize": 128,
+                "hw.perflevel0.l2cachesize": 16_384,
+                "hw.perflevel1.physicalcpu": 6,
+                "hw.perflevel1.logicalcpu": 6,
+                "hw.perflevel1.l1icachesize": 128,
+                "hw.perflevel1.l1dcachesize": 64,
+                "hw.perflevel1.l2cachesize": 4_096,
+                "kern.hv_support": 1,
+                "hw.memsize": 16_000,
+                "hw.optional.arm64": 1,
+            ]
+        )
+        let profile = await SystemHardwareProfileReader(sysctl: sysctl).readProfile()
+
+        return profile.cpuName == "Example CPU"
+            && profile.packageCount == 1
+            && profile.physicalCoreCount == 10
+            && profile.logicalProcessorCount == 10
+            && profile.virtualizationSupported == true
+            && profile.performanceLevels.count == 2
+            && profile.performanceLevels[0].name == "Performance"
+            && profile.performanceLevels[1].physicalCoreCount == 6
+            && profile.l3CacheBytes == nil
+            && profile.installedMemoryBytes == 16_000
+            && profile.memoryType == "Unified memory"
+    }
+
+    private static func partialHardwareProfile() async -> Bool {
+        let profile = await SystemHardwareProfileReader(
+            sysctl: DictionarySysctlReader(
+                strings: ["machdep.cpu.brand_string": "Partial CPU"],
+                integers: [:]
+            )
+        ).readProfile()
+
+        return profile.cpuName == "Partial CPU"
+            && profile.packageCount == nil
+            && profile.performanceLevels.isEmpty
+            && profile.virtualizationSupported == nil
+            && profile.installedMemoryBytes == nil
+            && profile.memoryType == nil
+    }
+
+    private static func secondaryActivityStream() async -> Bool {
+        let clock = ManualSamplingClock()
+        let reader = FixedSystemActivityReader()
+        let stream = makeSystemActivityStream(reader: reader, clock: clock)
+        var iterator = stream.makeAsyncIterator()
+
+        guard let first = await iterator.next(),
+              first.processCount == 4,
+              first.threadCount == nil,
+              first.uptime == 12,
+              await waitUntil({ await clock.hasSleeper }),
+              await clock.lastSleepDuration == .seconds(1) else { return false }
+        await clock.advance(by: 5)
+        guard let second = await iterator.next() else { return false }
+        return second.timestamp == 5
+    }
+
     private static func liveMachCPUSample() async -> Bool {
         let reader = MachCPUTickReader()
         guard case let .success(first) = await reader.readTicks() else { return false }
@@ -466,7 +586,29 @@ struct StatusDriverModelTests {
               let utilization = MemoryUsageCalculator.utilization(from: statistics) else {
             return false
         }
-        return (0...1).contains(utilization)
+        guard (0...1).contains(utilization),
+              let usage = MemoryUsageCalculator.calculate(from: statistics) else { return false }
+        return usage.details.installedBytes > 0
+            && usage.details.inUseBytes <= usage.details.installedBytes
+            && usage.details.availableBytes <= usage.details.installedBytes
+    }
+
+    private static func liveHardwareProfile() async -> Bool {
+        let profile = await SystemHardwareProfileReader().readProfile()
+        return !(profile.cpuName ?? "").isEmpty
+            && (profile.packageCount ?? 0) > 0
+            && (profile.physicalCoreCount ?? 0) > 0
+            && (profile.logicalProcessorCount ?? 0) > 0
+            && (profile.installedMemoryBytes ?? 0) > 0
+            && !profile.performanceLevels.isEmpty
+    }
+
+    private static func liveSystemActivity() async -> Bool {
+        let activity = await DarwinSystemActivityReader().readActivity(at: 1)
+        return activity.timestamp == 1
+            && (activity.processCount ?? 0) > 0
+            && (activity.threadCount ?? 0) > 0
+            && (activity.uptime ?? 0) > 0
     }
 
     private static func metricReading(
@@ -548,6 +690,30 @@ private actor FixedSnapshotProducer: MetricSnapshotProducer {
                 metric: .memory,
                 availability: .available
             )
+        )
+    }
+}
+
+private struct DictionarySysctlReader: SysctlValueReading {
+    let strings: [String: String]
+    let integers: [String: UInt64]
+
+    func string(for name: String) -> String? {
+        strings[name]
+    }
+
+    func integer(for name: String) -> UInt64? {
+        integers[name]
+    }
+}
+
+private struct FixedSystemActivityReader: SystemActivityReading {
+    func readActivity(at timestamp: TimeInterval) -> SystemActivitySnapshot {
+        SystemActivitySnapshot(
+            timestamp: timestamp,
+            processCount: 4,
+            threadCount: nil,
+            uptime: 12
         )
     }
 }

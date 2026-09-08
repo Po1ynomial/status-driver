@@ -6,21 +6,53 @@ package struct MemoryStatistics: Equatable, Sendable {
     package let purgeablePages: UInt64
     package let wiredPages: UInt64
     package let compressorPages: UInt64
+    package let externalPages: UInt64
     package let physicalPages: UInt64
+    package let pageSizeBytes: UInt64
 
     package init(
         internalPages: UInt64,
         purgeablePages: UInt64,
         wiredPages: UInt64,
         compressorPages: UInt64,
-        physicalPages: UInt64
+        externalPages: UInt64 = 0,
+        physicalPages: UInt64,
+        pageSizeBytes: UInt64 = 1
     ) {
         self.internalPages = internalPages
         self.purgeablePages = purgeablePages
         self.wiredPages = wiredPages
         self.compressorPages = compressorPages
+        self.externalPages = externalPages
         self.physicalPages = physicalPages
+        self.pageSizeBytes = pageSizeBytes
     }
+}
+
+package struct MemoryDetails: Equatable, Sendable {
+    package let statistics: MemoryStatistics
+    package let installedBytes: UInt64
+    package let inUseBytes: UInt64
+    package let availableBytes: UInt64
+    package let appBytes: UInt64
+    package let wiredBytes: UInt64
+    package let compressedBytes: UInt64
+    package let fileCacheBytes: UInt64
+
+    package var appFraction: Double { fraction(appBytes) }
+    package var wiredFraction: Double { fraction(wiredBytes) }
+    package var compressedFraction: Double { fraction(compressedBytes) }
+    package var availableFraction: Double { fraction(availableBytes) }
+
+    private func fraction(_ bytes: UInt64) -> Double {
+        guard installedBytes > 0 else { return 0 }
+        return min(Double(bytes) / Double(installedBytes), 1)
+    }
+}
+
+package struct MemoryUsage: Equatable, Sendable {
+    package let utilization: Double
+    package let details: MemoryDetails
 }
 
 package enum MemoryReadError: Error, Equatable, Sendable {
@@ -34,15 +66,20 @@ package protocol MemoryStatisticsReader: Sendable {
 }
 
 package actor MachMemoryStatisticsReader: MemoryStatisticsReader {
-    private var cachedPhysicalPages: UInt64?
+    private struct PhysicalMemory: Sendable {
+        let pages: UInt64
+        let pageSizeBytes: UInt64
+    }
+
+    private var cachedPhysicalMemory: PhysicalMemory?
 
     package init() {}
 
     package func readStatistics() -> Result<MemoryStatistics, MemoryReadError> {
-        let physicalPages: UInt64
-        switch resolvePhysicalPages() {
+        let physicalMemory: PhysicalMemory
+        switch resolvePhysicalMemory() {
         case let .success(value):
-            physicalPages = value
+            physicalMemory = value
         case let .failure(error):
             return .failure(error)
         }
@@ -66,14 +103,16 @@ package actor MachMemoryStatisticsReader: MemoryStatisticsReader {
                 purgeablePages: UInt64(info.purgeable_count),
                 wiredPages: UInt64(info.wire_count),
                 compressorPages: UInt64(info.compressor_page_count),
-                physicalPages: physicalPages
+                externalPages: UInt64(info.external_page_count),
+                physicalPages: physicalMemory.pages,
+                pageSizeBytes: physicalMemory.pageSizeBytes
             )
         )
     }
 
-    private func resolvePhysicalPages() -> Result<UInt64, MemoryReadError> {
-        if let cachedPhysicalPages {
-            return .success(cachedPhysicalPages)
+    private func resolvePhysicalMemory() -> Result<PhysicalMemory, MemoryReadError> {
+        if let cachedPhysicalMemory {
+            return .success(cachedPhysicalMemory)
         }
 
         var pageSize: vm_size_t = 0
@@ -91,29 +130,76 @@ package actor MachMemoryStatisticsReader: MemoryStatisticsReader {
             return .failure(.sysctl(errno))
         }
 
-        let physicalPages = physicalBytes / UInt64(pageSize)
-        guard physicalPages > 0 else {
+        let physicalMemory = PhysicalMemory(
+            pages: physicalBytes / UInt64(pageSize),
+            pageSizeBytes: UInt64(pageSize)
+        )
+        guard physicalMemory.pages > 0 else {
             return .failure(.invalidPageSize)
         }
-        cachedPhysicalPages = physicalPages
-        return .success(physicalPages)
+        cachedPhysicalMemory = physicalMemory
+        return .success(physicalMemory)
     }
 }
 
 package enum MemoryUsageCalculator {
-    package static func utilization(from statistics: MemoryStatistics) -> Double? {
-        guard statistics.physicalPages > 0 else { return nil }
+    package static func calculate(from statistics: MemoryStatistics) -> MemoryUsage? {
+        guard statistics.physicalPages > 0, statistics.pageSizeBytes > 0 else { return nil }
 
         let appPages = statistics.internalPages >= statistics.purgeablePages
             ? statistics.internalPages - statistics.purgeablePages
             : 0
-        let appAndWired = saturatingAdd(appPages, statistics.wiredPages)
-        let usedPages = saturatingAdd(appAndWired, statistics.compressorPages)
-        return min(Double(usedPages) / Double(statistics.physicalPages), 1)
+        let boundedAppPages = min(appPages, statistics.physicalPages)
+        let afterAppPages = statistics.physicalPages - boundedAppPages
+        let boundedWiredPages = min(statistics.wiredPages, afterAppPages)
+        let afterWiredPages = afterAppPages - boundedWiredPages
+        let boundedCompressedPages = min(statistics.compressorPages, afterWiredPages)
+        let availablePages = afterWiredPages - boundedCompressedPages
+        let boundedUsedPages = statistics.physicalPages - availablePages
+
+        let installedBytes = saturatingMultiply(
+            statistics.physicalPages,
+            statistics.pageSizeBytes
+        )
+        guard installedBytes > 0 else { return nil }
+
+        let details = MemoryDetails(
+            statistics: statistics,
+            installedBytes: installedBytes,
+            inUseBytes: saturatingMultiply(boundedUsedPages, statistics.pageSizeBytes),
+            availableBytes: saturatingMultiply(
+                availablePages,
+                statistics.pageSizeBytes
+            ),
+            appBytes: saturatingMultiply(
+                boundedAppPages,
+                statistics.pageSizeBytes
+            ),
+            wiredBytes: saturatingMultiply(
+                boundedWiredPages,
+                statistics.pageSizeBytes
+            ),
+            compressedBytes: saturatingMultiply(
+                boundedCompressedPages,
+                statistics.pageSizeBytes
+            ),
+            fileCacheBytes: saturatingMultiply(
+                min(statistics.externalPages, availablePages),
+                statistics.pageSizeBytes
+            )
+        )
+        return MemoryUsage(
+            utilization: min(Double(boundedUsedPages) / Double(statistics.physicalPages), 1),
+            details: details
+        )
     }
 
-    private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
-        let result = lhs.addingReportingOverflow(rhs)
+    package static func utilization(from statistics: MemoryStatistics) -> Double? {
+        calculate(from: statistics)?.utilization
+    }
+
+    private static func saturatingMultiply(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let result = lhs.multipliedReportingOverflow(by: rhs)
         return result.overflow ? UInt64.max : result.partialValue
     }
 }
@@ -122,6 +208,7 @@ package actor MemoryMetricProducer: MetricReadingProducer {
     private let reader: any MemoryStatisticsReader
     private var filter: ExponentialMovingAverage
     private var lastValidValue = 0.5
+    private var lastValidDetails: MemoryDetails?
 
     package init(
         reader: any MemoryStatisticsReader = MachMemoryStatisticsReader(),
@@ -133,21 +220,24 @@ package actor MemoryMetricProducer: MetricReadingProducer {
 
     package func reading(at timestamp: TimeInterval) async -> MetricReading {
         guard case let .success(statistics) = await reader.readStatistics(),
-              let utilization = MemoryUsageCalculator.utilization(from: statistics) else {
+              let usage = MemoryUsageCalculator.calculate(from: statistics) else {
             return MetricReading(
                 timestamp: timestamp,
                 value: lastValidValue,
                 metric: .memory,
-                availability: .unavailable
+                availability: .unavailable,
+                details: lastValidDetails.map(MetricReadingDetails.memory)
             )
         }
 
-        lastValidValue = filter.update(value: utilization, at: timestamp)
+        lastValidValue = filter.update(value: usage.utilization, at: timestamp)
+        lastValidDetails = usage.details
         return MetricReading(
             timestamp: timestamp,
             value: lastValidValue,
             metric: .memory,
-            availability: .available
+            availability: .available,
+            details: .memory(usage.details)
         )
     }
 }
