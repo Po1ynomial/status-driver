@@ -1,8 +1,8 @@
 import Foundation
 
-package enum MetricSourceIdentity: String, Equatable, Sendable {
+package enum MetricIdentity: String, Equatable, Sendable {
     case cpu
-    case synthetic
+    case memory
 }
 
 package enum MetricAvailability: Equatable, Sendable {
@@ -13,18 +13,18 @@ package enum MetricAvailability: Equatable, Sendable {
 package struct MetricReading: Equatable, Sendable {
     package let timestamp: TimeInterval
     package let value: Double
-    package let source: MetricSourceIdentity
+    package let metric: MetricIdentity
     package let availability: MetricAvailability
 
     package init(
         timestamp: TimeInterval,
         value: Double,
-        source: MetricSourceIdentity,
+        metric: MetricIdentity,
         availability: MetricAvailability
     ) {
         self.timestamp = timestamp
         self.value = value.isFinite ? min(max(value, 0), 1) : 0
-        self.source = source
+        self.metric = metric
         self.availability = availability
     }
 
@@ -33,12 +33,27 @@ package struct MetricReading: Equatable, Sendable {
     }
 }
 
+package struct MetricSnapshot: Equatable, Sendable {
+    package let timestamp: TimeInterval
+    package let cpu: MetricReading
+    package let memory: MetricReading
+
+    package init(timestamp: TimeInterval, cpu: MetricReading, memory: MetricReading) {
+        precondition(cpu.metric == .cpu)
+        precondition(memory.metric == .memory)
+        precondition(cpu.timestamp == timestamp && memory.timestamp == timestamp)
+        self.timestamp = timestamp
+        self.cpu = cpu
+        self.memory = memory
+    }
+}
+
 package enum MetricSourceMode: Equatable, Sendable {
-    case cpu
+    case live
     case synthetic
 
     package init(arguments: [String]) {
-        self = arguments.contains("--synthetic") ? .synthetic : .cpu
+        self = arguments.contains("--synthetic") ? .synthetic : .live
     }
 }
 

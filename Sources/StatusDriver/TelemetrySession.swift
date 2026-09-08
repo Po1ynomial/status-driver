@@ -4,6 +4,7 @@ import StatusDriverCore
 @MainActor
 final class TelemetrySession: ObservableObject {
     @Published private(set) var latestReading: MetricReading?
+    @Published private(set) var latestMemoryReading: MetricReading?
 
     let sourceMode: MetricSourceMode
     private var isRunning = false
@@ -16,20 +17,22 @@ final class TelemetrySession: ObservableObject {
         guard !isRunning else { return }
         isRunning = true
         latestReading = nil
+        latestMemoryReading = nil
         defer { isRunning = false }
 
-        let producer: any MetricReadingProducer = switch sourceMode {
-        case .cpu:
-            CPUMetricProducer()
+        let producer: any MetricSnapshotProducer = switch sourceMode {
+        case .live:
+            ConcurrentMetricSnapshotProducer()
         case .synthetic:
-            SyntheticMetricProducer()
+            SyntheticMetricSnapshotProducer()
         }
 
-        var startupGate = MetricStartupGate(sourceMode: sourceMode)
-        for await reading in makeMetricStream(producer: producer) {
+        var cpuStartupGate = MetricStartupGate(sourceMode: sourceMode)
+        for await snapshot in makeMetricStream(producer: producer) {
             if Task.isCancelled { break }
-            latestReading = reading
-            if let terrainReading = startupGate.consume(reading) {
+            latestReading = snapshot.cpu
+            latestMemoryReading = snapshot.memory
+            if let terrainReading = cpuStartupGate.consume(snapshot.cpu) {
                 scene.ingest(terrainReading)
             }
         }

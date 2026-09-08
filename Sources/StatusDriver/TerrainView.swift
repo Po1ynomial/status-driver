@@ -61,9 +61,9 @@ private struct MetricAnnotation: View {
 
     private var label: String {
         switch (sourceMode, reading?.availability) {
-        case (.cpu, .some(.available)):
+        case (.live, .some(.available)):
             "CPU \(percentage)%"
-        case (.cpu, _):
+        case (.live, _):
             "CPU unavailable"
         case (.synthetic, _):
             "SYNTHETIC \(percentage)%"
@@ -75,7 +75,7 @@ private struct MetricAnnotation: View {
     }
 
     private var indicatorColor: Color {
-        if sourceMode == .cpu, reading?.availability != .available {
+        if sourceMode == .live, reading?.availability != .available {
             return Color(red: 0.78, green: 0.24, blue: 0.12)
         }
         return Color(red: 0.95, green: 0.31, blue: 0.08)

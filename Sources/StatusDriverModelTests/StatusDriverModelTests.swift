@@ -21,13 +21,19 @@ struct StatusDriverModelTests {
             ("CPU utilization", { cpuUtilization() }),
             ("CPU counter rollover", { cpuCounterRollover() }),
             ("CPU zero delta", { cpuZeroDelta() }),
-            ("CPU smoothing", { cpuSmoothing() }),
+            ("metric smoothing", { metricSmoothing() }),
             ("CPU zero-delta and failure recovery", cpuFailureRecovery),
+            ("memory utilization", { memoryUtilization() }),
+            ("memory arithmetic bounds", { memoryArithmeticBounds() }),
+            ("memory failure recovery", memoryFailureRecovery),
+            ("metric failure isolation", metricFailureIsolation),
+            ("dual synthetic channels", dualSyntheticChannels),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
             ("stream cancellation", streamCancellation),
             ("live Mach CPU sample", liveMachCPUSample),
+            ("live Mach memory sample", liveMachMemorySample),
         ]
 
         var failures = 0
@@ -54,7 +60,7 @@ struct StatusDriverModelTests {
             && MetricReading(
                 timestamp: 0,
                 value: .infinity,
-                source: .cpu,
+                metric: .cpu,
                 availability: .available
             ).value == 0
     }
@@ -179,7 +185,7 @@ struct StatusDriverModelTests {
             && calculator.consume(ticks) == nil
     }
 
-    private static func cpuSmoothing() -> Bool {
+    private static func metricSmoothing() -> Bool {
         var filter = ExponentialMovingAverage(timeConstant: 0.75)
         let first = filter.update(value: 0, at: 0)
         let second = filter.update(value: 1, at: 0.75)
@@ -206,7 +212,6 @@ struct StatusDriverModelTests {
         let recovered = await producer.reading(at: 0.60)
 
         return baseline.availability == .unavailable
-            && baseline.value == 0.5
             && live.availability == .available
             && live.value == 0.6
             && zeroDelta.availability == .available
@@ -218,51 +223,138 @@ struct StatusDriverModelTests {
             && recovered.value > 0.5
     }
 
+    private static func memoryUtilization() -> Bool {
+        let statistics = MemoryStatistics(
+            internalPages: 600,
+            purgeablePages: 100,
+            wiredPages: 200,
+            compressorPages: 100,
+            physicalPages: 1_000
+        )
+        return MemoryUsageCalculator.utilization(from: statistics) == 0.8
+    }
+
+    private static func memoryArithmeticBounds() -> Bool {
+        let purgeableExceedsInternal = MemoryStatistics(
+            internalPages: 50,
+            purgeablePages: 100,
+            wiredPages: 100,
+            compressorPages: 50,
+            physicalPages: 1_000
+        )
+        let overflowing = MemoryStatistics(
+            internalPages: UInt64.max,
+            purgeablePages: 0,
+            wiredPages: UInt64.max,
+            compressorPages: UInt64.max,
+            physicalPages: 1
+        )
+        let noMemory = MemoryStatistics(
+            internalPages: 0,
+            purgeablePages: 0,
+            wiredPages: 0,
+            compressorPages: 0,
+            physicalPages: 0
+        )
+
+        return MemoryUsageCalculator.utilization(from: purgeableExceedsInternal) == 0.15
+            && MemoryUsageCalculator.utilization(from: overflowing) == 1
+            && MemoryUsageCalculator.utilization(from: noMemory) == nil
+    }
+
+    private static func memoryFailureRecovery() async -> Bool {
+        let reader = ScriptedMemoryReader(results: [
+            .success(memoryStatistics(usedFraction: 0.8)),
+            .failure(.kernel(KERN_FAILURE)),
+            .success(memoryStatistics(usedFraction: 0.6)),
+        ])
+        let producer = MemoryMetricProducer(reader: reader, smoothingTimeConstant: 0.75)
+
+        let live = await producer.reading(at: 0)
+        let failed = await producer.reading(at: 0.75)
+        let recovered = await producer.reading(at: 1.5)
+
+        return live.metric == .memory
+            && live.availability == .available
+            && live.value == 0.8
+            && failed.availability == .unavailable
+            && failed.value == live.value
+            && recovered.availability == .available
+            && recovered.value < live.value
+            && recovered.value > 0.6
+    }
+
+    private static func metricFailureIsolation() async -> Bool {
+        let cpuReader = ScriptedTickReader(results: [
+            .success(CPUTicks(user: 100, system: 50, idle: 850, nice: 0)),
+            .success(CPUTicks(user: 112, system: 56, idle: 862, nice: 0)),
+        ])
+        let memoryReader = ScriptedMemoryReader(results: [
+            .success(memoryStatistics(usedFraction: 0.7)),
+            .failure(.kernel(KERN_FAILURE)),
+        ])
+        let producer = ConcurrentMetricSnapshotProducer(
+            cpuProducer: CPUMetricProducer(reader: cpuReader),
+            memoryProducer: MemoryMetricProducer(reader: memoryReader)
+        )
+
+        let first = await producer.snapshot(at: 0)
+        let second = await producer.snapshot(at: 0.15)
+        return first.cpu.availability == .unavailable
+            && first.memory.availability == .available
+            && second.memory.availability == .unavailable
+            && second.cpu.availability == .available
+    }
+
+    private static func dualSyntheticChannels() async -> Bool {
+        let producer = SyntheticMetricSnapshotProducer(
+            cpuInitialValue: 0.2,
+            memoryInitialValue: 0.8
+        )
+        let snapshot = await producer.snapshot(at: 0)
+        return snapshot.cpu.metric == .cpu
+            && snapshot.memory.metric == .memory
+            && snapshot.cpu.availability == .available
+            && snapshot.memory.availability == .available
+            && snapshot.cpu.value < 0.4
+            && snapshot.memory.value > 0.6
+    }
+
     private static func sourceSelection() -> Bool {
-        MetricSourceMode(arguments: ["StatusDriver"]) == .cpu
+        MetricSourceMode(arguments: ["StatusDriver"]) == .live
             && MetricSourceMode(arguments: ["StatusDriver", "--synthetic"]) == .synthetic
     }
 
     private static func startupReadingGate() -> Bool {
-        var cpuGate = MetricStartupGate(sourceMode: .cpu, unavailableGracePeriod: 0.3)
-        let unavailable = MetricReading(
+        var liveGate = MetricStartupGate(sourceMode: .live, unavailableGracePeriod: 0.3)
+        let unavailable = metricReading(
             timestamp: 0,
             value: 0.5,
-            source: .cpu,
+            metric: .cpu,
             availability: .unavailable
         )
-        let available = MetricReading(
-            timestamp: 0.15,
-            value: 0.2,
-            source: .cpu,
-            availability: .available
-        )
-        guard cpuGate.consume(unavailable) == nil,
-              cpuGate.consume(available) == available else { return false }
+        let available = metricReading(timestamp: 0.15, value: 0.2, metric: .cpu)
+        guard liveGate.consume(unavailable) == nil,
+              liveGate.consume(available) == available else { return false }
 
-        var failedCPUGate = MetricStartupGate(sourceMode: .cpu, unavailableGracePeriod: 0.3)
-        guard failedCPUGate.consume(unavailable) == nil else { return false }
-        let fallback = MetricReading(
+        var failedLiveGate = MetricStartupGate(sourceMode: .live, unavailableGracePeriod: 0.3)
+        guard failedLiveGate.consume(unavailable) == nil else { return false }
+        let fallback = metricReading(
             timestamp: 0.3,
             value: 0.5,
-            source: .cpu,
+            metric: .cpu,
             availability: .unavailable
         )
 
         var syntheticGate = MetricStartupGate(sourceMode: .synthetic)
-        let synthetic = MetricReading(
-            timestamp: 0,
-            value: 0.4,
-            source: .synthetic,
-            availability: .available
-        )
-        return failedCPUGate.consume(fallback) == fallback
+        let synthetic = metricReading(timestamp: 0, value: 0.4, metric: .cpu)
+        return failedLiveGate.consume(fallback) == fallback
             && syntheticGate.consume(synthetic) == synthetic
     }
 
     private static func streamSkipsDeadlineBackfill() async -> Bool {
         let clock = ManualSamplingClock()
-        let producer = FixedMetricProducer()
+        let producer = FixedSnapshotProducer()
         let stream = makeMetricStream(producer: producer, clock: clock)
         var iterator = stream.makeAsyncIterator()
 
@@ -283,7 +375,7 @@ struct StatusDriverModelTests {
 
     private static func streamCancellation() async -> Bool {
         let clock = ManualSamplingClock()
-        let producer = FixedMetricProducer()
+        let producer = FixedSnapshotProducer()
         let consumer = Task {
             for await _ in makeMetricStream(producer: producer, clock: clock) {}
         }
@@ -312,6 +404,40 @@ struct StatusDriverModelTests {
         return false
     }
 
+    private static func liveMachMemorySample() async -> Bool {
+        let reader = MachMemoryStatisticsReader()
+        guard case let .success(statistics) = await reader.readStatistics(),
+              statistics.physicalPages > 0,
+              let utilization = MemoryUsageCalculator.utilization(from: statistics) else {
+            return false
+        }
+        return (0...1).contains(utilization)
+    }
+
+    private static func metricReading(
+        timestamp: TimeInterval,
+        value: Double,
+        metric: MetricIdentity,
+        availability: MetricAvailability = .available
+    ) -> MetricReading {
+        MetricReading(
+            timestamp: timestamp,
+            value: value,
+            metric: metric,
+            availability: availability
+        )
+    }
+
+    private static func memoryStatistics(usedFraction: Double) -> MemoryStatistics {
+        MemoryStatistics(
+            internalPages: UInt64(usedFraction * 1_000),
+            purgeablePages: 0,
+            wiredPages: 0,
+            compressorPages: 0,
+            physicalPages: 1_000
+        )
+    }
+
     private static func approximatelyEqual(_ lhs: Double, _ rhs: Double) -> Bool {
         abs(lhs - rhs) < 1e-9
     }
@@ -338,13 +464,35 @@ private actor ScriptedTickReader: CPUTickReader {
     }
 }
 
-private actor FixedMetricProducer: MetricReadingProducer {
-    func reading(at timestamp: TimeInterval) -> MetricReading {
-        MetricReading(
+private actor ScriptedMemoryReader: MemoryStatisticsReader {
+    private var results: [Result<MemoryStatistics, MemoryReadError>]
+
+    init(results: [Result<MemoryStatistics, MemoryReadError>]) {
+        self.results = results
+    }
+
+    func readStatistics() -> Result<MemoryStatistics, MemoryReadError> {
+        guard !results.isEmpty else { return .failure(.kernel(KERN_FAILURE)) }
+        return results.removeFirst()
+    }
+}
+
+private actor FixedSnapshotProducer: MetricSnapshotProducer {
+    func snapshot(at timestamp: TimeInterval) -> MetricSnapshot {
+        MetricSnapshot(
             timestamp: timestamp,
-            value: 0.5,
-            source: .synthetic,
-            availability: .available
+            cpu: MetricReading(
+                timestamp: timestamp,
+                value: 0.5,
+                metric: .cpu,
+                availability: .available
+            ),
+            memory: MetricReading(
+                timestamp: timestamp,
+                value: 0.7,
+                metric: .memory,
+                availability: .available
+            )
         )
     }
 }

@@ -2,10 +2,11 @@
 
 ## Implemented capabilities
 
-- `swift run StatusDriver` opens one native SwiftUI window and uses aggregate system CPU utilization as terrain.
-- `swift run StatusDriver -- --synthetic` selects the bounded random source instead.
-- An application-owned asynchronous stream samples every 150 ms independently of SpriteKit rendering.
+- `swift run StatusDriver` opens one native SwiftUI window, collects CPU and memory concurrently, and uses aggregate CPU as terrain.
+- `swift run StatusDriver -- --synthetic` creates independent random CPU and memory channels while keeping synthetic CPU as the visible terrain.
+- An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU readings use unprivileged Mach host statistics, wrapping tick deltas, and a time-aware 0.75-second exponential moving average.
+- Memory readings use unprivileged Mach VM statistics, `hw.memsize`, the accepted reclaimability-aware formula, and an independent 0.75-second moving average.
 - Normal CPU startup waits for the first calculated utilization before prefilling flat terrain. Persistent startup failure opens with a neutral value after 0.3 seconds.
 - Successful CPU snapshots with no changed ticks reuse the last value without flashing unavailable.
 - Failed Mach calls reuse the last filtered value with unavailable status and retry without changing source mode.
@@ -27,9 +28,10 @@
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines the complete key-code mapping.
-- `Sources/StatusDriverCore/MetricReading.swift` defines source identity, availability, normalized readings, source selection, and startup gating.
+- `Sources/StatusDriverCore/MemoryUsage.swift` defines VM and physical-memory reads, bounded memory arithmetic, and the memory producer.
+- `Sources/StatusDriverCore/MetricReading.swift` defines metric identity, availability, paired snapshots, source selection, and startup gating.
 - `Sources/StatusDriverCore/MetricSample.swift` defines normalized terrain samples and the bounded random walk.
-- `Sources/StatusDriverCore/MetricStream.swift` defines producers, clocks, bounded asynchronous streaming, and the synthetic producer.
+- `Sources/StatusDriverCore/MetricStream.swift` defines paired producers, clocks, bounded asynchronous streaming, concurrent live production, and dual synthetic production.
 - `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns flat prefill, ordered retention, and pruning.
 - `Sources/StatusDriverCore/TerrainGeometry.swift` maps samples and creates line and fill paths.
 - `Sources/StatusDriverModelTests/StatusDriverModelTests.swift` runs automated checks without Xcode test frameworks.
@@ -37,12 +39,12 @@
 ## Runtime flow
 
 1. `StatusDriverApp` parses `--synthetic`; all other launches select CPU.
-2. `TelemetrySession` creates the selected producer and a bounded 150 ms asynchronous stream.
-3. The CPU producer reads aggregate user, system, idle, and nice ticks and calculates non-idle utilization between successful snapshots.
-4. A successful zero-delta snapshot keeps the last value and available status after startup. A failed Mach call keeps the value but changes status to unavailable.
-5. The producer applies time-aware smoothing only when a new utilization exists.
-6. The startup gate normally waits for the first calculated CPU value. Synthetic mode starts immediately, while persistent CPU failure starts neutral terrain after 0.3 seconds.
-7. The main-actor session updates the annotation and sends accepted readings to `TerrainScene`.
+2. `TelemetrySession` creates either concurrent live producers or two independent synthetic producers and starts a bounded 150 ms stream.
+3. Each stream item has CPU and memory readings with the same monotonic timestamp.
+4. The CPU producer calculates aggregate non-idle utilization from tick deltas. The memory producer calculates reclaimability-aware used pages from VM statistics and physical page count.
+5. Each producer applies independent time-aware smoothing and availability handling.
+6. The CPU startup gate waits for the first calculated terrain value. Synthetic mode starts immediately, while persistent CPU failure starts neutral terrain after 0.3 seconds.
+7. The main-actor session retains both latest readings but sends only CPU to `TerrainScene` during this slice.
 8. The scene prefills 60 seconds of flat history from its first reading, then appends and prunes streamed samples.
 9. The scene maps retained samples at 120 points per second into its current height and rebuilds the line, fill, and collision edge from the same points.
 10. The camera interpolates between reading arrivals and trails the newest sample by 2.75 seconds.
@@ -53,7 +55,7 @@ The sample cadence, smoothing interval, viewport delay, terrain scale, and physi
 ## Inspection
 
 - Run `swift build` to compile every package target.
-- Run `swift run StatusDriverModelTests` to execute terrain, CPU math, smoothing, failure, source selection, startup, scheduling, cancellation, and live Mach checks.
+- Run `swift run StatusDriverModelTests` to execute terrain, CPU and memory math, arithmetic bounds, smoothing, failure isolation, dual synthetic production, source selection, startup, scheduling, cancellation, and live Mach checks.
 - Run `swift run StatusDriver` and verify the annotation says `CPU n%` without a permission prompt.
 - Generate temporary CPU load and verify the percentage and delayed terrain respond within about one second.
 - Run `swift run StatusDriver -- --synthetic` and verify the annotation and terrain identify synthetic mode.
@@ -62,8 +64,9 @@ The sample cadence, smoothing interval, viewport delay, terrain scale, and physi
 
 ## Limitations
 
-- Only aggregate CPU and synthetic sources exist. There is no per-core, memory, process, disk, or network telemetry.
-- The interface contains one source/value annotation but no metric controls, axes, legends, or full activity-monitor layout.
+- Memory is collected but is not yet displayed or usable as terrain. The next slice adds selection and independent histories.
+- There is no per-core, process, disk, or network telemetry.
+- The interface still contains one CPU/source annotation and no metric selector, axes, legends, or full activity-monitor layout.
 - Telemetry history exists only for the current process and is not persisted.
 - CPU failure presentation has model coverage but no user-facing failure injection command.
 - The package targets macOS 26 and has no bundle, signing, or distribution setup.
