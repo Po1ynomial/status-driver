@@ -25,18 +25,5 @@ struct StatusDriverApp: App {
         }
         .defaultSize(width: 1_200, height: 700)
         .windowResizability(.contentMinSize)
-        .commands {
-            CommandMenu("Performance") {
-                Button("CPU") {
-                    telemetry.select(.cpu)
-                }
-                .keyboardShortcut("1", modifiers: [])
-
-                Button("Memory") {
-                    telemetry.select(.memory)
-                }
-                .keyboardShortcut("2", modifiers: [])
-            }
-        }
     }
 }

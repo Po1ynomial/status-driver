@@ -32,8 +32,16 @@ package struct SyntheticMetricSnapshotProducer: MetricSnapshotProducer {
     private let memoryProducer: SyntheticMetricProducer
 
     package init(cpuInitialValue: Double = 0.45, memoryInitialValue: Double = 0.70) {
-        cpuProducer = SyntheticMetricProducer(metric: .cpu, initialValue: cpuInitialValue)
-        memoryProducer = SyntheticMetricProducer(metric: .memory, initialValue: memoryInitialValue)
+        cpuProducer = SyntheticMetricProducer(
+            resource: .cpu,
+            initialValue: cpuInitialValue,
+            seed: 0x435055
+        )
+        memoryProducer = SyntheticMetricProducer(
+            resource: .memory,
+            initialValue: memoryInitialValue,
+            seed: 0x4D454D
+        )
     }
 
     package func snapshot(at timestamp: TimeInterval) async -> MetricSnapshot {
@@ -94,12 +102,12 @@ package func makeMetricStream(
 }
 
 package actor SyntheticMetricProducer: MetricReadingProducer {
-    private let metric: MetricIdentity
+    private let resource: PerformanceResourceID
     private var source: BoundedRandomWalkSource
 
-    package init(metric: MetricIdentity, initialValue: Double) {
-        self.metric = metric
-        source = BoundedRandomWalkSource(initialValue: initialValue)
+    package init(resource: PerformanceResourceID, initialValue: Double, seed: UInt64) {
+        self.resource = resource
+        source = BoundedRandomWalkSource(initialValue: initialValue, seed: seed)
     }
 
     package func reading(at timestamp: TimeInterval) -> MetricReading {
@@ -107,7 +115,7 @@ package actor SyntheticMetricProducer: MetricReadingProducer {
         return MetricReading(
             timestamp: timestamp,
             value: sample.value,
-            metric: metric,
+            resource: resource,
             availability: .available
         )
     }

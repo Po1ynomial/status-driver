@@ -19,7 +19,7 @@ struct StatusDriverModelTests {
             ("60-second graph timeline", { graphTimelineMapping() }),
             ("hidden collision extension", { hiddenCollisionExtension() }),
             ("driving key map", { drivingKeyMap() }),
-            ("vehicle visibility state", { vehicleVisibilityState() }),
+            ("resource easter egg state", { resourceEasterEggState() }),
             ("shared terrain geometry", { sharedTerrainGeometry() }),
             ("CPU utilization", { cpuUtilization() }),
             ("CPU counter rollover", { cpuCounterRollover() }),
@@ -38,8 +38,10 @@ struct StatusDriverModelTests {
             ("independent metric histories", { independentMetricHistories() }),
             ("dual history retention", { dualHistoryRetention() }),
             ("left terrain margin retention", { leftTerrainMarginRetention() }),
-            ("metric selection rules", { metricSelectionRules() }),
-            ("metric selection key map", { metricSelectionKeyMap() }),
+            ("metric selection rules", { resourceSelectionRules() }),
+            ("resource inventory reconciliation", { resourceInventoryReconciliation() }),
+            ("adaptive scale hysteresis", { adaptiveScaleHysteresis() }),
+            ("deterministic synthetic source", { deterministicSyntheticSource() }),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
@@ -77,7 +79,7 @@ struct StatusDriverModelTests {
             && MetricReading(
                 timestamp: 0,
                 value: .infinity,
-                metric: .cpu,
+                resource: .cpu,
                 availability: .available
             ).value == 0
     }
@@ -179,17 +181,31 @@ struct StatusDriverModelTests {
             && drivingInput(forKeyCode: 125) == nil
             && drivingInput(forKeyCode: 13) == nil
             && drivingInput(forKeyCode: 1) == nil
-            && drivingInput(forKeyCode: 8) == .toggleCar
+            && drivingInput(forKeyCode: 8) == .toggleEasterEgg
+            && drivingInput(forKeyCode: 18) == nil
+            && drivingInput(forKeyCode: 19) == nil
             && drivingInput(forKeyCode: 99) == nil
     }
 
-    private static func vehicleVisibilityState() -> Bool {
-        var visibility = VehicleVisibilityState()
-        guard !visibility.isVisible else { return false }
-        let shown = visibility.toggle()
-        let visibleAfterShow = visibility.isVisible
-        let hidden = !visibility.toggle()
-        return shown && visibleAfterShow && hidden && !visibility.isVisible
+    private static func resourceEasterEggState() -> Bool {
+        var state = EasterEggState()
+        guard !state.isEnabled else { return false }
+        state.toggle()
+        let car = state.activeUtility(for: .cpu)
+        let network = state.activeUtility(
+            for: PerformanceResourceDescriptor(
+                id: .network(interfaceName: "en0"),
+                title: "Wi-Fi",
+                kind: .network,
+                colorRole: .wifi,
+                graphKind: .adaptiveNonphysical,
+                easterEggUtility: .none
+            )
+        )
+        state.toggle()
+        return car == .car
+            && network == .none
+            && state.activeUtility(for: .cpu) == .none
     }
 
     private static func sharedTerrainGeometry() -> Bool {
@@ -361,7 +377,7 @@ struct StatusDriverModelTests {
         let failed = await producer.reading(at: 0.75)
         let recovered = await producer.reading(at: 1.5)
 
-        return live.metric == .memory
+        return live.resource == .memory
             && live.availability == .available
             && live.value == 0.8
             && live.details != nil
@@ -401,8 +417,8 @@ struct StatusDriverModelTests {
             memoryInitialValue: 0.8
         )
         let snapshot = await producer.snapshot(at: 0)
-        return snapshot.cpu.metric == .cpu
-            && snapshot.memory.metric == .memory
+        return snapshot.cpu.resource == .cpu
+            && snapshot.memory.resource == .memory
             && snapshot.cpu.availability == .available
             && snapshot.memory.availability == .available
             && snapshot.cpu.value < 0.4
@@ -416,13 +432,13 @@ struct StatusDriverModelTests {
             chartInterval: 1
         )
         let initial = histories.ingestUpdate(
-            metricReading(timestamp: 0, value: 0.2, metric: .cpu)
+            metricReading(timestamp: 0, value: 0.2, resource: .cpu)
         )
         let firstOpenBucketUpdate = histories.ingestUpdate(
-            metricReading(timestamp: 0.3, value: 0.4, metric: .cpu)
+            metricReading(timestamp: 0.3, value: 0.4, resource: .cpu)
         )
         let secondOpenBucketUpdate = histories.ingestUpdate(
-            metricReading(timestamp: 0.9, value: 0.8, metric: .cpu)
+            metricReading(timestamp: 0.9, value: 0.8, resource: .cpu)
         )
 
         let exposedBeforeFinalization = histories.samples(for: .cpu)
@@ -434,7 +450,7 @@ struct StatusDriverModelTests {
         }
 
         let bucketClose = histories.ingestUpdate(
-            metricReading(timestamp: 1.05, value: 0.6, metric: .cpu)
+            metricReading(timestamp: 1.05, value: 0.6, resource: .cpu)
         )
         let finalized = histories.samples(for: .cpu)
         guard bucketClose == .historyChanged, finalized.count >= 2 else { return false }
@@ -455,9 +471,9 @@ struct StatusDriverModelTests {
             retentionDuration: 65,
             chartInterval: 1
         )
-        histories.ingest(metricReading(timestamp: 0, value: 0.2, metric: .cpu))
-        histories.ingest(metricReading(timestamp: 0.5, value: 0.4, metric: .cpu))
-        histories.ingest(metricReading(timestamp: 10, value: 0.6, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 0, value: 0.2, resource: .cpu))
+        histories.ingest(metricReading(timestamp: 0.5, value: 0.4, resource: .cpu))
+        histories.ingest(metricReading(timestamp: 10, value: 0.6, resource: .cpu))
 
         let samples = histories.samples(for: .cpu)
         let positiveTimestamps = samples.map(\.timestamp).filter { $0 > 0 }
@@ -475,7 +491,7 @@ struct StatusDriverModelTests {
                 metricReading(
                     timestamp: Double(index) * 0.15,
                     value: Double(index % 10) / 10,
-                    metric: .cpu
+                    resource: .cpu
                 )
             )
         }
@@ -486,10 +502,10 @@ struct StatusDriverModelTests {
 
     private static func independentMetricHistories() -> Bool {
         var histories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 1)
-        histories.ingest(metricReading(timestamp: 0, value: 0.2, metric: .cpu))
-        histories.ingest(metricReading(timestamp: 0, value: 0.7, metric: .memory))
-        histories.ingest(metricReading(timestamp: 2, value: 0.3, metric: .cpu))
-        histories.ingest(metricReading(timestamp: 3.1, value: 0.4, metric: .cpu))
+        histories.ingest(metricReading(timestamp: 0, value: 0.2, resource: .cpu))
+        histories.ingest(metricReading(timestamp: 0, value: 0.7, resource: .memory))
+        histories.ingest(metricReading(timestamp: 2, value: 0.3, resource: .cpu))
+        histories.ingest(metricReading(timestamp: 3.1, value: 0.4, resource: .cpu))
 
         let cpu = histories.samples(for: .cpu)
         let memory = histories.samples(for: .memory)
@@ -497,15 +513,15 @@ struct StatusDriverModelTests {
             && cpu.first?.timestamp == 2
             && memory.last?.value == 0.7
             && memory.last?.timestamp == 0
-            && histories.ingest(metricReading(timestamp: 3.1, value: 0.9, metric: .cpu)) == false
+            && histories.ingest(metricReading(timestamp: 3.1, value: 0.9, resource: .cpu)) == false
     }
 
     private static func dualHistoryRetention() -> Bool {
         var histories = MetricHistoryStore(sampleInterval: 0.1, retentionDuration: 60)
         for index in 0..<10_000 {
             let timestamp = Double(index) * 0.1
-            histories.ingest(metricReading(timestamp: timestamp, value: 0.2, metric: .cpu))
-            histories.ingest(metricReading(timestamp: timestamp, value: 0.7, metric: .memory))
+            histories.ingest(metricReading(timestamp: timestamp, value: 0.2, resource: .cpu))
+            histories.ingest(metricReading(timestamp: timestamp, value: 0.7, resource: .memory))
         }
 
         return histories.samples(for: .cpu).count <= 602
@@ -519,7 +535,7 @@ struct StatusDriverModelTests {
                 metricReading(
                     timestamp: Double(timestamp),
                     value: 0.5,
-                    metric: .cpu
+                    resource: .cpu
                 )
             )
         }
@@ -530,13 +546,13 @@ struct StatusDriverModelTests {
         return first <= 35 && margin >= 5 && margin <= 6
     }
 
-    private static func metricSelectionRules() -> Bool {
+    private static func resourceSelectionRules() -> Bool {
         var selection = MetricSelectionState()
         let rejectsCurrent = !selection.select(.cpu, availability: .available)
         let rejectsUnavailable = !selection.select(.memory, availability: .unavailable)
         let selectsMemory = selection.select(.memory, availability: .available)
         let rejectsUnavailableSwitch = !selection.select(.cpu, availability: .unavailable)
-        let remainsSelectedWhenUnavailable = selection.selectedMetric == .memory
+        let remainsSelectedWhenUnavailable = selection.selectedResource == .memory
         let selectsCPU = selection.select(.cpu, availability: .available)
 
         return rejectsCurrent
@@ -545,13 +561,84 @@ struct StatusDriverModelTests {
             && rejectsUnavailableSwitch
             && remainsSelectedWhenUnavailable
             && selectsCPU
-            && selection.selectedMetric == .cpu
+            && selection.selectedResource == .cpu
     }
 
-    private static func metricSelectionKeyMap() -> Bool {
-        metricSelection(forKeyCode: 18) == .cpu
-            && metricSelection(forKeyCode: 19) == .memory
-            && metricSelection(forKeyCode: 20) == nil
+    private static func resourceInventoryReconciliation() -> Bool {
+        let disk = PerformanceResourceDescriptor(
+            id: .disk(registryID: 7, bsdName: "disk0"),
+            title: "Disk 0",
+            kind: .disk,
+            colorRole: .disk,
+            graphKind: .physicalFixed,
+            easterEggUtility: .car
+        )
+        let network = PerformanceResourceDescriptor(
+            id: .network(interfaceName: "en0"),
+            title: "Wi-Fi",
+            kind: .network,
+            colorRole: .wifi,
+            graphKind: .adaptiveNonphysical,
+            easterEggUtility: .none
+        )
+        let gpu = PerformanceResourceDescriptor(
+            id: .gpu(registryID: 9),
+            title: "GPU",
+            kind: .gpu,
+            colorRole: .gpu,
+            graphKind: .physicalFixed,
+            easterEggUtility: .car
+        )
+
+        var inventory = PerformanceResourceInventory()
+        inventory.reconcile(discovered: [gpu, network, disk], selectedResource: .cpu)
+        guard inventory.records.map(\.id) == [.cpu, .memory, disk.id, network.id, gpu.id] else {
+            return false
+        }
+
+        inventory.reconcile(discovered: [], selectedResource: disk.id)
+        let remaining = inventory.records
+        let retainedSelectedDisk = remaining.contains {
+            $0.id == disk.id && $0.availability == .unavailable
+        }
+        let retainedNetwork = remaining.contains {
+            $0.id == network.id && $0.availability == .disconnected
+        }
+        let retainedGPU = remaining.contains {
+            $0.id == gpu.id && $0.availability == .unavailable
+        }
+        guard retainedSelectedDisk && retainedNetwork && retainedGPU else {
+            return false
+        }
+
+        inventory.reconcile(discovered: [], selectedResource: .cpu)
+        return !inventory.records.contains { $0.id == disk.id }
+            && inventory.records.contains { $0.id == network.id }
+            && inventory.records.contains { $0.id == gpu.id }
+    }
+
+    private static func adaptiveScaleHysteresis() -> Bool {
+        var scale = AdaptiveScale(
+            ladder: [100, 1_000, 10_000],
+            initialCeiling: 1_000,
+            lowerDelay: 30
+        )
+        let raised = scale.update(maximumValue: 950, at: 0)
+        guard raised, scale.ceiling == 10_000 else { return false }
+        _ = scale.update(maximumValue: 100, at: 1)
+        let tooEarly = scale.update(maximumValue: 100, at: 30)
+        let lowered = scale.update(maximumValue: 100, at: 31)
+        return !tooEarly && lowered && scale.ceiling == 1_000
+    }
+
+    private static func deterministicSyntheticSource() -> Bool {
+        var first = BoundedRandomWalkSource(initialValue: 0.5, seed: 42)
+        var second = BoundedRandomWalkSource(initialValue: 0.5, seed: 42)
+        var different = BoundedRandomWalkSource(initialValue: 0.5, seed: 43)
+        let firstValues = (0..<20).map { first.nextSample(at: Double($0)).value }
+        let secondValues = (0..<20).map { second.nextSample(at: Double($0)).value }
+        let differentValues = (0..<20).map { different.nextSample(at: Double($0)).value }
+        return firstValues == secondValues && firstValues != differentValues
     }
 
     private static func sourceSelection() -> Bool {
@@ -564,10 +651,10 @@ struct StatusDriverModelTests {
         let unavailable = metricReading(
             timestamp: 0,
             value: 0.5,
-            metric: .cpu,
+            resource: .cpu,
             availability: .unavailable
         )
-        let available = metricReading(timestamp: 0.15, value: 0.2, metric: .cpu)
+        let available = metricReading(timestamp: 0.15, value: 0.2, resource: .cpu)
         guard liveGate.consume(unavailable) == nil,
               liveGate.consume(available) == available else { return false }
 
@@ -576,12 +663,12 @@ struct StatusDriverModelTests {
         let fallback = metricReading(
             timestamp: 0.3,
             value: 0.5,
-            metric: .cpu,
+            resource: .cpu,
             availability: .unavailable
         )
 
         var syntheticGate = MetricStartupGate(sourceMode: .synthetic)
-        let synthetic = metricReading(timestamp: 0, value: 0.4, metric: .cpu)
+        let synthetic = metricReading(timestamp: 0, value: 0.4, resource: .cpu)
         return failedLiveGate.consume(fallback) == fallback
             && syntheticGate.consume(synthetic) == synthetic
     }
@@ -748,13 +835,13 @@ struct StatusDriverModelTests {
     private static func metricReading(
         timestamp: TimeInterval,
         value: Double,
-        metric: MetricIdentity,
+        resource: PerformanceResourceID,
         availability: MetricAvailability = .available
     ) -> MetricReading {
         MetricReading(
             timestamp: timestamp,
             value: value,
-            metric: metric,
+            resource: resource,
             availability: availability
         )
     }
@@ -815,13 +902,13 @@ private actor FixedSnapshotProducer: MetricSnapshotProducer {
             cpu: MetricReading(
                 timestamp: timestamp,
                 value: 0.5,
-                metric: .cpu,
+                resource: .cpu,
                 availability: .available
             ),
             memory: MetricReading(
                 timestamp: timestamp,
                 value: 0.7,
-                metric: .memory,
+                resource: .memory,
                 availability: .available
             )
         )

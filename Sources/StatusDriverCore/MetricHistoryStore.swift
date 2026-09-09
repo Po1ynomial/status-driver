@@ -13,7 +13,7 @@ package enum MetricHistoryUpdate: Equatable, Sendable {
 package struct MetricHistoryStore {
     private let retentionDuration: TimeInterval
     private let chartInterval: TimeInterval
-    private var buffers: [MetricIdentity: ChartSampleBuffer] = [:]
+    private var buffers: [PerformanceResourceID: ChartSampleBuffer] = [:]
 
     package init(
         sampleInterval: TimeInterval,
@@ -34,20 +34,20 @@ package struct MetricHistoryStore {
 
     @discardableResult
     package mutating func ingestUpdate(_ reading: MetricReading) -> MetricHistoryUpdate {
-        var buffer = buffers[reading.metric] ?? ChartSampleBuffer()
+        var buffer = buffers[reading.resource] ?? ChartSampleBuffer()
         let update = buffer.ingest(
             reading.sample,
             chartInterval: chartInterval,
             retentionDuration: retentionDuration
         )
         if update.wasAccepted {
-            buffers[reading.metric] = buffer
+            buffers[reading.resource] = buffer
         }
         return update
     }
 
-    package func samples(for metric: MetricIdentity) -> [MetricSample] {
-        buffers[metric]?.samples ?? []
+    package func samples(for resource: PerformanceResourceID) -> [MetricSample] {
+        buffers[resource]?.samples ?? []
     }
 }
 
@@ -160,32 +160,21 @@ private struct ChartSampleBuffer {
 }
 
 package struct MetricSelectionState: Equatable, Sendable {
-    package private(set) var selectedMetric: MetricIdentity
+    package private(set) var selectedResource: PerformanceResourceID
 
-    package init(selectedMetric: MetricIdentity = .cpu) {
-        self.selectedMetric = selectedMetric
+    package init(selectedResource: PerformanceResourceID = .cpu) {
+        self.selectedResource = selectedResource
     }
 
     @discardableResult
     package mutating func select(
-        _ metric: MetricIdentity,
+        _ resource: PerformanceResourceID,
         availability: MetricAvailability
     ) -> Bool {
-        guard metric != selectedMetric, availability == .available else {
+        guard resource != selectedResource, availability == .available else {
             return false
         }
-        selectedMetric = metric
+        selectedResource = resource
         return true
-    }
-}
-
-package func metricSelection(forKeyCode keyCode: UInt16) -> MetricIdentity? {
-    switch keyCode {
-    case 18:
-        .cpu
-    case 19:
-        .memory
-    default:
-        nil
     }
 }

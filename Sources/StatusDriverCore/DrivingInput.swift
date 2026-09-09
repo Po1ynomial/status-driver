@@ -6,19 +6,7 @@ package enum DrivingControl: Hashable {
 package enum DrivingInput: Equatable {
     case control(DrivingControl)
     case reset
-    case toggleCar
-}
-
-package struct VehicleVisibilityState: Equatable, Sendable {
-    package private(set) var isVisible = false
-
-    package init() {}
-
-    @discardableResult
-    package mutating func toggle() -> Bool {
-        isVisible.toggle()
-        return isVisible
-    }
+    case toggleEasterEgg
 }
 
 package func drivingInput(forKeyCode keyCode: UInt16) -> DrivingInput? {
@@ -30,7 +18,7 @@ package func drivingInput(forKeyCode keyCode: UInt16) -> DrivingInput? {
     case 15:
         .reset
     case 8:
-        .toggleCar
+        .toggleEasterEgg
     default:
         nil
     }

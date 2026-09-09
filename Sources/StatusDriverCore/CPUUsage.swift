@@ -127,7 +127,7 @@ package actor CPUMetricProducer: MetricReadingProducer {
             return MetricReading(
                 timestamp: timestamp,
                 value: lastValidValue,
-                metric: .cpu,
+                resource: .cpu,
                 availability: .available
             )
         case .failure:
@@ -139,7 +139,7 @@ package actor CPUMetricProducer: MetricReadingProducer {
         MetricReading(
             timestamp: timestamp,
             value: lastValidValue,
-            metric: .cpu,
+            resource: .cpu,
             availability: hasValidValue ? .available : .unavailable
         )
     }
@@ -148,7 +148,7 @@ package actor CPUMetricProducer: MetricReadingProducer {
         MetricReading(
             timestamp: timestamp,
             value: lastValidValue,
-            metric: .cpu,
+            resource: .cpu,
             availability: .unavailable
         )
     }

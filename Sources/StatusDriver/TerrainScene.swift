@@ -4,7 +4,7 @@ import StatusDriverCore
 
 @MainActor
 final class TerrainScene: SKScene {
-    var onMetricSelectionRequest: ((MetricIdentity) -> Void)?
+    var onEasterEggToggleRequest: (() -> Void)?
 
     private struct Configuration {
         let sampleInterval: TimeInterval = 0.15
@@ -40,8 +40,9 @@ final class TerrainScene: SKScene {
         sampleInterval: configuration.sampleInterval,
         retentionDuration: configuration.retentionDuration
     )
-    private var selectedMetric: MetricIdentity = .cpu
-    private var vehicleVisibility = VehicleVisibilityState()
+    private var selectedResource: PerformanceResourceID = .cpu
+    private var selectedColorRole: PerformanceColorRole = .cpu
+    private var activeEasterEggUtility: EasterEggUtility = .none
     private var vehicle: Vehicle?
     private var pressedControls: Set<DrivingControl> = []
     private var latestReadingTimestamp: TimeInterval?
@@ -73,7 +74,7 @@ final class TerrainScene: SKScene {
         updateCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
-        if vehicleVisibility.isVisible {
+        if vehicle != nil {
             resetVehicle()
         }
     }
@@ -82,7 +83,7 @@ final class TerrainScene: SKScene {
         guard isConfigured else { return }
 
         updateCamera()
-        ensureVisibleVehicleExists()
+        ensureVehicleMatchesUtility()
         vehicle?.update(controls: pressedControls)
         resetVehicleIfOutsideViewport()
     }
@@ -92,7 +93,7 @@ final class TerrainScene: SKScene {
         guard update.wasAccepted else { return }
 
         latestReadingTimestamp = max(latestReadingTimestamp ?? reading.timestamp, reading.timestamp)
-        if isConfigured, reading.metric == selectedMetric, update == .historyChanged {
+        if isConfigured, reading.resource == selectedResource, update == .historyChanged {
             updateCamera()
             rebuildTerrain(rebuildCollisions: true)
         }
@@ -108,40 +109,42 @@ final class TerrainScene: SKScene {
     }
 
     @discardableResult
-    func selectMetric(_ metric: MetricIdentity) -> Bool {
-        guard metric != selectedMetric, histories.samples(for: metric).count >= 2 else {
+    func selectResource(
+        _ resource: PerformanceResourceID,
+        colorRole: PerformanceColorRole
+    ) -> Bool {
+        guard resource != selectedResource, histories.samples(for: resource).count >= 2 else {
             return false
         }
 
-        selectedMetric = metric
+        selectedResource = resource
+        selectedColorRole = colorRole
         applyGraphStyle()
         rebuildTerrain(rebuildCollisions: true)
-        if vehicleVisibility.isVisible {
+        if vehicle != nil {
             resetVehicle()
         }
         view?.window?.makeFirstResponder(view)
         return true
     }
 
-    override func keyDown(with event: NSEvent) {
-        if let metric = metricSelection(forKeyCode: event.keyCode) {
-            if !event.isARepeat {
-                onMetricSelectionRequest?(metric)
-            }
-            return
-        }
+    func setEasterEggUtility(_ utility: EasterEggUtility) {
+        activeEasterEggUtility = utility
+        ensureVehicleMatchesUtility()
+    }
 
+    override func keyDown(with event: NSEvent) {
         guard let input = drivingInput(forKeyCode: event.keyCode) else { return }
         switch input {
         case let .control(control):
-            if vehicleVisibility.isVisible {
+            if vehicle != nil {
                 pressedControls.insert(control)
             }
         case .reset where !event.isARepeat:
             resetVehicle()
-        case .toggleCar where !event.isARepeat:
-            toggleVehicle()
-        case .reset, .toggleCar:
+        case .toggleEasterEgg where !event.isARepeat:
+            onEasterEggToggleRequest?()
+        case .reset, .toggleEasterEgg:
             break
         }
     }
@@ -174,7 +177,7 @@ final class TerrainScene: SKScene {
 
     private func applyGraphStyle() {
         let color: NSColor
-        switch (selectedMetric, isDarkAppearance) {
+        switch (selectedColorRole, isDarkAppearance) {
         case (.cpu, false):
             color = NSColor(red: 0.10, green: 0.48, blue: 0.76, alpha: 1)
         case (.cpu, true):
@@ -183,6 +186,26 @@ final class TerrainScene: SKScene {
             color = NSColor(red: 0.53, green: 0.34, blue: 0.74, alpha: 1)
         case (.memory, true):
             color = NSColor(red: 0.72, green: 0.52, blue: 0.93, alpha: 1)
+        case (.disk, false):
+            color = NSColor(red: 0.27, green: 0.62, blue: 0.26, alpha: 1)
+        case (.disk, true):
+            color = NSColor(red: 0.45, green: 0.80, blue: 0.42, alpha: 1)
+        case (.wifi, false):
+            color = NSColor(red: 0.88, green: 0.46, blue: 0.14, alpha: 1)
+        case (.wifi, true):
+            color = NSColor(red: 1.0, green: 0.64, blue: 0.28, alpha: 1)
+        case (.ethernet, false):
+            color = NSColor(red: 0.64, green: 0.28, blue: 0.24, alpha: 1)
+        case (.ethernet, true):
+            color = NSColor(red: 0.90, green: 0.47, blue: 0.40, alpha: 1)
+        case (.network, false):
+            color = NSColor(red: 0.72, green: 0.38, blue: 0.18, alpha: 1)
+        case (.network, true):
+            color = NSColor(red: 0.94, green: 0.58, blue: 0.32, alpha: 1)
+        case (.gpu, false):
+            color = NSColor(red: 0.05, green: 0.62, blue: 0.72, alpha: 1)
+        case (.gpu, true):
+            color = NSColor(red: 0.28, green: 0.80, blue: 0.88, alpha: 1)
         }
 
         backgroundColor = isDarkAppearance
@@ -243,7 +266,7 @@ final class TerrainScene: SKScene {
 
     private func terrainGeometry(sceneHeight: CGFloat) -> TerrainGeometry {
         TerrainGeometry(
-            samples: histories.samples(for: selectedMetric),
+            samples: histories.samples(for: selectedResource),
             layout: configuration.terrainLayout(width: size.width),
             sceneHeight: sceneHeight
         )
@@ -262,10 +285,11 @@ final class TerrainScene: SKScene {
         )
     }
 
-    private func toggleVehicle() {
-        if vehicleVisibility.toggle() {
+    private func ensureVehicleMatchesUtility() {
+        switch activeEasterEggUtility {
+        case .car:
             ensureVisibleVehicleExists()
-        } else {
+        case .none:
             pressedControls.removeAll()
             vehicle?.remove(from: self)
             vehicle = nil
@@ -273,9 +297,8 @@ final class TerrainScene: SKScene {
     }
 
     private func ensureVisibleVehicleExists() {
-        guard vehicleVisibility.isVisible,
-              vehicle == nil,
-              histories.samples(for: selectedMetric).count >= 2 else { return }
+        guard activeEasterEggUtility == .car, vehicle == nil,
+              histories.samples(for: selectedResource).count >= 2 else { return }
         replaceVehicle(at: vehicleResetPosition())
     }
 
@@ -285,9 +308,9 @@ final class TerrainScene: SKScene {
     }
 
     private func resetVehicle() {
-        guard vehicleVisibility.isVisible else { return }
+        guard activeEasterEggUtility == .car else { return }
         pressedControls.removeAll()
-        guard histories.samples(for: selectedMetric).count >= 2 else {
+        guard histories.samples(for: selectedResource).count >= 2 else {
             vehicle?.remove(from: self)
             vehicle = nil
             return

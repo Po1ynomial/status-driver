@@ -26,14 +26,19 @@ struct TerrainView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 900, minHeight: 600)
         .task {
-            scene.onMetricSelectionRequest = { [weak telemetry] metric in
-                telemetry?.select(metric)
+            scene.onEasterEggToggleRequest = { [weak telemetry] in
+                telemetry?.toggleEasterEgg()
             }
-            defer { scene.onMetricSelectionRequest = nil }
+            defer { scene.onEasterEggToggleRequest = nil }
             await telemetry.run(scene: scene)
         }
-        .onChange(of: telemetry.selectedMetric, initial: true) { _, metric in
-            scene.selectMetric(metric)
+        .onChange(of: telemetry.selectedResource, initial: true) { _, resource in
+            let descriptor = telemetry.descriptor(for: resource)
+            scene.selectResource(resource, colorRole: descriptor?.colorRole ?? .cpu)
+            scene.setEasterEggUtility(telemetry.activeEasterEggUtility)
+        }
+        .onChange(of: telemetry.easterEggEnabled, initial: true) { _, _ in
+            scene.setEasterEggUtility(telemetry.activeEasterEggUtility)
         }
         .onChange(of: colorScheme, initial: true) { _, scheme in
             scene.applyAppearance(isDark: scheme == .dark)
@@ -43,21 +48,15 @@ struct TerrainView: View {
     private var performanceSidebar: some View {
         List(selection: selectionBinding) {
             Section {
-                ResourceRow(
-                    metric: .cpu,
-                    reading: telemetry.latestCPUReading,
-                    history: telemetry.cpuHistory,
-                    installedMemoryBytes: telemetry.hardwareProfile?.installedMemoryBytes
-                )
-                .tag(MetricIdentity.cpu)
-
-                ResourceRow(
-                    metric: .memory,
-                    reading: telemetry.latestMemoryReading,
-                    history: telemetry.memoryHistory,
-                    installedMemoryBytes: telemetry.hardwareProfile?.installedMemoryBytes
-                )
-                .tag(MetricIdentity.memory)
+                ForEach(telemetry.resources) { record in
+                    ResourceRow(
+                        descriptor: record.descriptor,
+                        reading: telemetry.reading(for: record.id),
+                        history: telemetry.history(for: record.id),
+                        installedMemoryBytes: telemetry.hardwareProfile?.installedMemoryBytes
+                    )
+                    .tag(record.id)
+                }
             } header: {
                 if telemetry.sourceMode == .synthetic {
                     Text("Synthetic data")
@@ -70,12 +69,12 @@ struct TerrainView: View {
         .navigationTitle("Status Driver")
     }
 
-    private var selectionBinding: Binding<MetricIdentity?> {
+    private var selectionBinding: Binding<PerformanceResourceID?> {
         Binding(
-            get: { telemetry.selectedMetric },
-            set: { metric in
-                if let metric {
-                    telemetry.select(metric)
+            get: { telemetry.selectedResource },
+            set: { resource in
+                if let resource {
+                    telemetry.select(resource)
                 }
             }
         )
@@ -83,22 +82,22 @@ struct TerrainView: View {
 }
 
 private struct ResourceRow: View {
-    let metric: MetricIdentity
+    let descriptor: PerformanceResourceDescriptor
     let reading: MetricReading?
     let history: [MetricSample]
     let installedMemoryBytes: UInt64?
 
     var body: some View {
         HStack(spacing: 12) {
-            MetricSparkline(history: history, color: metric.tint)
+            MetricSparkline(history: history, color: descriptor.colorRole.tint)
                 .frame(width: 68, height: 46)
                 .overlay {
                     Rectangle()
-                        .stroke(metric.tint.opacity(0.52), lineWidth: 1)
+                        .stroke(descriptor.colorRole.tint.opacity(0.52), lineWidth: 1)
                 }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(metric.title)
+                Text(descriptor.title)
                     .font(.headline)
                 Text(summary)
                     .font(.system(.subheadline, design: .monospaced))
@@ -109,7 +108,6 @@ private struct ResourceRow: View {
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .help(metric == .cpu ? "Select CPU terrain (1)" : "Select Memory terrain (2)")
     }
 
     private var summary: String {
@@ -118,7 +116,7 @@ private struct ResourceRow: View {
         }
         let percentage = Int((reading.value * 100).rounded())
 
-        guard metric == .memory,
+        guard descriptor.id == .memory,
               let installedMemoryBytes,
               installedMemoryBytes > 0 else {
             return "\(percentage)%"
@@ -184,7 +182,7 @@ private struct PerformanceDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 detailHeader
-                Text(telemetry.selectedMetric == .cpu ? "% Utilization" : "Memory usage")
+                Text(telemetry.selectedResource == .cpu ? "% Utilization" : "Memory usage")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -199,7 +197,7 @@ private struct PerformanceDetailView: View {
                         }
                         .overlay {
                             Rectangle()
-                                .stroke(telemetry.selectedMetric.tint.opacity(0.72), lineWidth: 1)
+                                .stroke(selectedColor.opacity(0.72), lineWidth: 1)
                         }
 
                     HStack {
@@ -211,11 +209,11 @@ private struct PerformanceDetailView: View {
                     .foregroundStyle(.secondary)
                 }
 
-                if telemetry.selectedMetric == .memory {
+                if telemetry.selectedResource == .memory {
                     MemoryCompositionView(details: memoryDetails)
                 }
 
-                if telemetry.selectedMetric == .cpu {
+                if telemetry.selectedResource == .cpu {
                     CPUStatisticsView(
                         reading: telemetry.latestCPUReading,
                         profile: telemetry.hardwareProfile,
@@ -236,7 +234,7 @@ private struct PerformanceDetailView: View {
 
     private var detailHeader: some View {
         HStack(alignment: .firstTextBaseline, spacing: 20) {
-            Text(telemetry.selectedMetric.title)
+            Text(selectedDescriptor.title)
                 .font(.system(size: 34, weight: .semibold))
             Spacer(minLength: 24)
             Text(hardwareSummary)
@@ -247,11 +245,17 @@ private struct PerformanceDetailView: View {
     }
 
     private var hardwareSummary: String {
-        switch telemetry.selectedMetric {
+        switch telemetry.selectedResource {
         case .cpu:
             telemetry.hardwareProfile?.cpuName ?? "CPU"
         case .memory:
             telemetry.hardwareProfile?.installedMemoryBytes.map(formatBytes) ?? "Memory"
+        case .disk:
+            "Disk"
+        case .network:
+            "Network"
+        case .gpu:
+            "GPU"
         }
     }
 
@@ -263,12 +267,24 @@ private struct PerformanceDetailView: View {
     }
 
     private var verticalMaximum: String {
-        switch telemetry.selectedMetric {
+        switch telemetry.selectedResource {
         case .cpu:
             "100%"
         case .memory:
             telemetry.hardwareProfile?.installedMemoryBytes.map(formatBytes) ?? "100%"
+        case .disk, .gpu:
+            "100%"
+        case .network:
+            ""
         }
+    }
+
+    private var selectedDescriptor: PerformanceResourceDescriptor {
+        telemetry.descriptor(for: telemetry.selectedResource) ?? .cpu
+    }
+
+    private var selectedColor: Color {
+        selectedDescriptor.colorRole.tint
     }
 }
 
@@ -352,13 +368,13 @@ private struct MemoryCompositionView: View {
             }
             .frame(height: 34)
             .overlay {
-                Rectangle().stroke(MetricIdentity.memory.tint.opacity(0.72), lineWidth: 1)
+                Rectangle().stroke(PerformanceColorRole.memory.tint.opacity(0.72), lineWidth: 1)
             }
         }
     }
 
     private func segment(width: CGFloat, opacity: Double) -> some View {
-        MetricIdentity.memory.tint
+        PerformanceColorRole.memory.tint
             .opacity(opacity)
             .frame(width: max(0, width))
     }
@@ -463,20 +479,28 @@ private final class FocusableSKView: SKView {
     }
 }
 
-private extension MetricIdentity {
-    var title: String {
-        switch self {
-        case .cpu: "CPU"
-        case .memory: "Memory"
-        }
-    }
-
+private extension PerformanceColorRole {
     var tint: Color {
         switch self {
         case .cpu:
-            Color(red: 0.10, green: 0.48, blue: 0.76)
+            return Color(red: 0.10, green: 0.48, blue: 0.76)
         case .memory:
-            Color(red: 0.53, green: 0.34, blue: 0.74)
+            return Color(red: 0.53, green: 0.34, blue: 0.74)
+        case .disk:
+            return Color(red: 0.27, green: 0.62, blue: 0.26)
+        case .wifi:
+            return Color(red: 0.88, green: 0.46, blue: 0.14)
+        case .ethernet:
+            return Color(red: 0.64, green: 0.28, blue: 0.24)
+        case let .network(index):
+            let colors = [
+                Color(red: 0.72, green: 0.38, blue: 0.18),
+                Color(red: 0.76, green: 0.31, blue: 0.24),
+                Color(red: 0.68, green: 0.43, blue: 0.17),
+            ]
+            return colors[abs(index) % colors.count]
+        case .gpu:
+            return Color(red: 0.05, green: 0.62, blue: 0.72)
         }
     }
 }

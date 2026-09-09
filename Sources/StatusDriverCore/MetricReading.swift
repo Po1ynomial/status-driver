@@ -1,10 +1,5 @@
 import Foundation
 
-package enum MetricIdentity: String, Equatable, Hashable, Sendable {
-    case cpu
-    case memory
-}
-
 package enum MetricAvailability: Equatable, Sendable {
     case available
     case unavailable
@@ -17,20 +12,20 @@ package enum MetricReadingDetails: Equatable, Sendable {
 package struct MetricReading: Equatable, Sendable {
     package let timestamp: TimeInterval
     package let value: Double
-    package let metric: MetricIdentity
+    package let resource: PerformanceResourceID
     package let availability: MetricAvailability
     package let details: MetricReadingDetails?
 
     package init(
         timestamp: TimeInterval,
         value: Double,
-        metric: MetricIdentity,
+        resource: PerformanceResourceID,
         availability: MetricAvailability,
         details: MetricReadingDetails? = nil
     ) {
         self.timestamp = timestamp
         self.value = value.isFinite ? min(max(value, 0), 1) : 0
-        self.metric = metric
+        self.resource = resource
         self.availability = availability
         self.details = details
     }
@@ -46,8 +41,8 @@ package struct MetricSnapshot: Equatable, Sendable {
     package let memory: MetricReading
 
     package init(timestamp: TimeInterval, cpu: MetricReading, memory: MetricReading) {
-        precondition(cpu.metric == .cpu)
-        precondition(memory.metric == .memory)
+        precondition(cpu.resource == .cpu)
+        precondition(memory.resource == .memory)
         precondition(cpu.timestamp == timestamp && memory.timestamp == timestamp)
         self.timestamp = timestamp
         self.cpu = cpu

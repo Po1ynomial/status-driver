@@ -224,7 +224,7 @@ package actor MemoryMetricProducer: MetricReadingProducer {
             return MetricReading(
                 timestamp: timestamp,
                 value: lastValidValue,
-                metric: .memory,
+                resource: .memory,
                 availability: .unavailable,
                 details: lastValidDetails.map(MetricReadingDetails.memory)
             )
@@ -235,7 +235,7 @@ package actor MemoryMetricProducer: MetricReadingProducer {
         return MetricReading(
             timestamp: timestamp,
             value: lastValidValue,
-            metric: .memory,
+            resource: .memory,
             availability: .available,
             details: .memory(usage.details)
         )

@@ -5,7 +5,12 @@ import StatusDriverCore
 final class TelemetrySession: ObservableObject {
     @Published private(set) var latestCPUReading: MetricReading?
     @Published private(set) var latestMemoryReading: MetricReading?
-    @Published private(set) var selectedMetric: MetricIdentity = .cpu
+    @Published private(set) var selectedResource: PerformanceResourceID = .cpu
+    @Published private(set) var resources: [PerformanceResourceRecord] = [
+        PerformanceResourceRecord(descriptor: .cpu),
+        PerformanceResourceRecord(descriptor: .memory),
+    ]
+    @Published private(set) var easterEggEnabled = false
     @Published private(set) var hardwareProfile: PerformanceHardwareProfile?
     @Published private(set) var systemActivity: SystemActivitySnapshot?
     @Published private(set) var cpuHistory: [MetricSample] = []
@@ -13,6 +18,8 @@ final class TelemetrySession: ObservableObject {
 
     let sourceMode: MetricSourceMode
     private var selection = MetricSelectionState()
+    private var inventory = PerformanceResourceInventory()
+    private var easterEgg = EasterEggState()
     private var interfaceHistories = MetricHistoryStore(
         sampleInterval: 0.15,
         retentionDuration: 65
@@ -39,31 +46,60 @@ final class TelemetrySession: ObservableObject {
         _ = await activityResult
     }
 
-    func reading(for metric: MetricIdentity) -> MetricReading? {
-        switch metric {
+    func reading(for resource: PerformanceResourceID) -> MetricReading? {
+        switch resource {
         case .cpu:
             latestCPUReading
         case .memory:
             latestMemoryReading
+        case .disk, .network, .gpu:
+            nil
         }
     }
 
+    func descriptor(for resource: PerformanceResourceID) -> PerformanceResourceDescriptor? {
+        inventory.descriptor(for: resource)
+    }
+
+    func history(for resource: PerformanceResourceID) -> [MetricSample] {
+        switch resource {
+        case .cpu:
+            cpuHistory
+        case .memory:
+            memoryHistory
+        case .disk, .network, .gpu:
+            []
+        }
+    }
+
+    var activeEasterEggUtility: EasterEggUtility {
+        guard let descriptor = descriptor(for: selectedResource) else { return .none }
+        return easterEgg.activeUtility(for: descriptor)
+    }
+
+    func toggleEasterEgg() {
+        easterEgg.toggle()
+        easterEggEnabled = easterEgg.isEnabled
+    }
+
     @discardableResult
-    func select(_ metric: MetricIdentity) -> Bool {
-        let availability = reading(for: metric)?.availability ?? .unavailable
-        let hasHistory = switch metric {
+    func select(_ resource: PerformanceResourceID) -> Bool {
+        let availability = reading(for: resource)?.availability ?? .unavailable
+        let hasHistory = switch resource {
         case .cpu:
             cpuHistory.count >= 2
         case .memory:
             memoryHistory.count >= 2
+        case .disk, .network, .gpu:
+            false
         }
         var candidate = selection
-        guard hasHistory, candidate.select(metric, availability: availability) else {
+        guard hasHistory, candidate.select(resource, availability: availability) else {
             return false
         }
 
         selection = candidate
-        selectedMetric = candidate.selectedMetric
+        selectedResource = candidate.selectedResource
         return true
     }
 
@@ -104,11 +140,13 @@ final class TelemetrySession: ObservableObject {
         scene.ingest(reading)
         guard update == .historyChanged else { return }
 
-        switch reading.metric {
+        switch reading.resource {
         case .cpu:
             cpuHistory = interfaceHistories.samples(for: .cpu)
         case .memory:
             memoryHistory = interfaceHistories.samples(for: .memory)
+        case .disk, .network, .gpu:
+            break
         }
     }
 }

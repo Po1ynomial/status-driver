@@ -5,7 +5,7 @@
 - `swift run StatusDriver` opens a native macOS Performance split view and collects aggregate CPU and reclaimability-aware memory concurrently.
 - `swift run StatusDriver -- --synthetic` creates independent random CPU and memory channels and marks the sidebar `Synthetic data`.
 - The resizable and collapsible sidebar contains only CPU and Memory, with current summaries and 60-second sparklines.
-- Clicks and app-wide `1`/`2` shortcuts select the resource and physical terrain.
+- Sidebar clicks are the only resource-selection method.
 - The CPU detail page shows chip name, utilization, process and best-effort thread counts, uptime, packages, cores, performance-level topology and caches, logical processors, and virtualization support.
 - The Memory detail page shows installed, in-use, available, app, wired, compressed, file-cache, and unified-memory values plus a composition bar.
 - CPU uses blue and Memory uses violet across sparklines, graph border, terrain, fill, and composition. The interface follows system light or dark appearance.
@@ -19,23 +19,24 @@
 - Five extra seconds of real history support the left boundary. An undrawn flat collision segment supports the right boundary.
 - Selection preserves viewport time, replaces drawing and collision geometry, restores graph focus, and resets a visible car.
 - The terrain stroke uses butt caps and bevel joins to avoid SpriteKit fragments on long, nearly flat paths.
-- The car is hidden on launch. Undisclosed `C` creates or removes the complete physical vehicle inside the graph.
+- One application-session easter-egg state starts disabled. Undisclosed `C` toggles it globally; current CPU and Memory descriptors both map enabled state to Car.
 
 ## Entry points
 
 - `Package.swift` defines the core library, application executable, and model-check executable.
-- `Sources/StatusDriver/StatusDriver.swift` selects live or synthetic mode, defines the window, and installs app-wide resource shortcuts.
+- `Sources/StatusDriver/StatusDriver.swift` selects live or synthetic mode and defines the window.
 - `Sources/StatusDriver/TelemetrySession.swift` loads hardware metadata, consumes fast and one-second streams, publishes sidebar histories and details, and owns selection state.
 - `Sources/StatusDriver/TerrainView.swift` defines the Performance split view, sidebar sparklines, selected-resource detail pages, Memory composition, formatters, and SpriteKit bridge.
 - `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, handles graph keyboard input, and coordinates the vehicle.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
-- `Sources/StatusDriverCore/DrivingInput.swift` defines driving, reset, car-toggle input, and vehicle visibility state.
+- `Sources/StatusDriverCore/DrivingInput.swift` defines driving, reset, and global easter-egg-toggle input.
 - `Sources/StatusDriverCore/MemoryUsage.swift` defines VM reads, raw and derived Memory details, bounded composition, and the Memory producer.
 - `Sources/StatusDriverCore/MetricHistoryStore.swift` owns independent rolling histories and selection rules.
 - `Sources/StatusDriverCore/MetricReading.swift` defines metric identity, availability, detail payloads, paired snapshots, source mode, and startup gating.
 - `Sources/StatusDriverCore/MetricStream.swift` defines paired producers, clocks, bounded streaming, concurrent live production, and dual synthetic production.
 - `Sources/StatusDriverCore/PerformanceDetails.swift` defines hardware profiles, sysctl mapping, process and thread enumeration, uptime, and the one-second secondary stream.
+- `Sources/StatusDriverCore/PerformanceResource.swift` defines stable dynamic IDs, descriptors, ordering, colors, graph/utility policies, discovery reconciliation, adaptive scale, and global easter-egg state.
 - `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns flat prefill, ordered retention, and pruning for one metric.
 - `Sources/StatusDriverCore/TerrainGeometry.swift` maps the 60-second timeline and creates separate visible and collision paths.
 - `Sources/StatusDriverModelTests/StatusDriverModelTests.swift` runs automated checks without Xcode test frameworks.
@@ -47,11 +48,11 @@
 3. Concurrent live or dual synthetic producers emit paired CPU and Memory readings every 150 ms.
 4. The session appends one immutable average per completed second, publishes that committed history for sparklines, and sends the same inputs to SpriteKit. Open buckets remain internal.
 5. A separate one-second stream publishes process count, best-effort thread count, and uptime.
-6. Native sidebar or command selection updates shared application state, then switches the SpriteKit terrain and graph colors.
+6. Native sidebar selection updates shared application state, then switches the SpriteKit terrain and graph colors.
 7. The detail page reads the selected metric, hardware profile, raw Memory detail, and one-second activity without delaying graph updates.
 8. The graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second.
 9. Finalized points are created offscreen right and never change after entering view. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
-10. No vehicle exists until `C` toggles visibility. Selection, resize, manual reset, and offscreen reset recreate a visible vehicle at graph center; hidden state stays empty.
+10. `C` toggles one application-owned session state. The selected resource descriptor maps enabled state to a utility; CPU and Memory currently map to Car.
 11. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
 
 ## Inspection
@@ -59,7 +60,7 @@
 - Run `swift build` to compile every package target.
 - Run `swift run StatusDriverModelTests` to execute terrain, telemetry, detail, hardware, secondary stream, selection, cancellation, and live system checks.
 - Run `swift run StatusDriver`; inspect both sidebar rows and detail pages and compare values with `top`, `vm_stat`, and `sysctl` when useful.
-- Select CPU and Memory by click and with `1`/`2`; verify the detail page, terrain color, collision, and car reset change together.
+- Select CPU and Memory by click; verify the detail page, terrain color, collision, and car reset change together. Number keys should not select resources.
 - Collapse and restore the sidebar with its native title-bar control. Resize the sidebar and window near their provisional bounds.
 - Change system appearance and verify native controls, text, graph, sparklines, composition, and car remain legible.
 - Run `swift run StatusDriver -- --synthetic`; verify the marker and both independent histories.
