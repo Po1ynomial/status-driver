@@ -42,6 +42,9 @@ struct StatusDriverModelTests {
             ("resource inventory reconciliation", { resourceInventoryReconciliation() }),
             ("adaptive scale hysteresis", { adaptiveScaleHysteresis() }),
             ("deterministic synthetic source", { deterministicSyntheticSource() }),
+            ("disk performance calculation", { diskPerformanceCalculation() }),
+            ("disk counter reset", { diskCounterReset() }),
+            ("synthetic disk coherence", syntheticDiskCoherence),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
@@ -51,6 +54,7 @@ struct StatusDriverModelTests {
             ("secondary activity stream", secondaryActivityStream),
             ("live Mach CPU sample", liveMachCPUSample),
             ("live Mach memory sample", liveMachMemorySample),
+            ("live IOKit disk discovery", liveDiskDiscovery),
             ("live hardware profile", liveHardwareProfile),
             ("live system activity", liveSystemActivity),
         ]
@@ -591,12 +595,20 @@ struct StatusDriverModelTests {
         )
 
         var inventory = PerformanceResourceInventory()
-        inventory.reconcile(discovered: [gpu, network, disk], selectedResource: .cpu)
+        inventory.reconcile(
+            discovered: [gpu, network, disk],
+            managedKinds: [.disk, .network, .gpu],
+            selectedResource: .cpu
+        )
         guard inventory.records.map(\.id) == [.cpu, .memory, disk.id, network.id, gpu.id] else {
             return false
         }
 
-        inventory.reconcile(discovered: [], selectedResource: disk.id)
+        inventory.reconcile(
+            discovered: [],
+            managedKinds: [.disk, .network, .gpu],
+            selectedResource: disk.id
+        )
         let remaining = inventory.records
         let retainedSelectedDisk = remaining.contains {
             $0.id == disk.id && $0.availability == .unavailable
@@ -611,7 +623,11 @@ struct StatusDriverModelTests {
             return false
         }
 
-        inventory.reconcile(discovered: [], selectedResource: .cpu)
+        inventory.reconcile(
+            discovered: [],
+            managedKinds: [.disk, .network, .gpu],
+            selectedResource: .cpu
+        )
         return !inventory.records.contains { $0.id == disk.id }
             && inventory.records.contains { $0.id == network.id }
             && inventory.records.contains { $0.id == gpu.id }
@@ -639,6 +655,88 @@ struct StatusDriverModelTests {
         let secondValues = (0..<20).map { second.nextSample(at: Double($0)).value }
         let differentValues = (0..<20).map { different.nextSample(at: Double($0)).value }
         return firstValues == secondValues && firstValues != differentValues
+    }
+
+    private static func diskPerformanceCalculation() -> Bool {
+        let identity = testDiskIdentity()
+        var calculator = DiskPerformanceCalculator()
+        let first = DiskDeviceSnapshot(
+            identity: identity,
+            counters: diskCounters(
+                bytesRead: 1_000,
+                bytesWritten: 2_000,
+                reads: 10,
+                writes: 20,
+                readTime: 100_000_000,
+                writeTime: 200_000_000
+            )
+        )
+        let second = DiskDeviceSnapshot(
+            identity: identity,
+            counters: diskCounters(
+                bytesRead: 3_000,
+                bytesWritten: 5_000,
+                reads: 14,
+                writes: 26,
+                readTime: 500_000_000,
+                writeTime: 900_000_000
+            )
+        )
+
+        guard calculator.consume(first, at: 0) == nil,
+              let reading = calculator.consume(second, at: 1),
+              case let .disk(details)? = reading.details else { return false }
+        return reading.resource == identity.resourceID
+            && reading.value == 1
+            && details.readBytesPerSecond == 2_000
+            && details.writeBytesPerSecond == 3_000
+            && details.readOperationsPerSecond == 4
+            && details.writeOperationsPerSecond == 6
+            && details.averageResponseMilliseconds == 110
+    }
+
+    private static func diskCounterReset() -> Bool {
+        let identity = testDiskIdentity()
+        var calculator = DiskPerformanceCalculator()
+        let high = DiskDeviceSnapshot(
+            identity: identity,
+            counters: diskCounters(
+                bytesRead: 10,
+                bytesWritten: 10,
+                reads: 10,
+                writes: 10,
+                readTime: 10,
+                writeTime: 10
+            )
+        )
+        let reset = DiskDeviceSnapshot(
+            identity: identity,
+            counters: diskCounters(
+                bytesRead: 1,
+                bytesWritten: 1,
+                reads: 1,
+                writes: 1,
+                readTime: 1,
+                writeTime: 1
+            )
+        )
+        _ = calculator.consume(high, at: 0)
+        return calculator.consume(reset, at: 1) == nil
+    }
+
+    private static func syntheticDiskCoherence() async -> Bool {
+        let firstMonitor = SyntheticDiskMonitor()
+        let secondMonitor = SyntheticDiskMonitor()
+        let first = await firstMonitor.sample(at: 1)
+        let second = await secondMonitor.sample(at: 1)
+        guard first == second,
+              let reading = first.readings.first,
+              case let .disk(details)? = reading.details else { return false }
+        return first.descriptors.first?.kind == .disk
+            && reading.availability == .available
+            && details.readBytesPerSecond + details.writeBytesPerSecond > 0
+            && details.readErrorDelta == 0
+            && details.writeErrorDelta == 0
     }
 
     private static func sourceSelection() -> Bool {
@@ -814,6 +912,15 @@ struct StatusDriverModelTests {
             && usage.details.availableBytes <= usage.details.installedBytes
     }
 
+    private static func liveDiskDiscovery() async -> Bool {
+        let snapshots = await IOKitDiskDiscovery().discover()
+        return snapshots.contains {
+            !$0.identity.bsdName.isEmpty
+                && !$0.identity.model.isEmpty
+                && $0.identity.capacityBytes > 0
+        }
+    }
+
     private static func liveHardwareProfile() async -> Bool {
         let profile = await SystemHardwareProfileReader().readProfile()
         return !(profile.cpuName ?? "").isEmpty
@@ -853,6 +960,38 @@ struct StatusDriverModelTests {
             wiredPages: 0,
             compressorPages: 0,
             physicalPages: 1_000
+        )
+    }
+
+    private static func testDiskIdentity() -> DiskIdentity {
+        DiskIdentity(
+            registryID: 7,
+            bsdName: "disk0",
+            model: "Test SSD",
+            capacityBytes: 1_000_000,
+            isSolidState: true,
+            isRemovable: false,
+            isSystemDisk: true
+        )
+    }
+
+    private static func diskCounters(
+        bytesRead: UInt64,
+        bytesWritten: UInt64,
+        reads: UInt64,
+        writes: UInt64,
+        readTime: UInt64,
+        writeTime: UInt64
+    ) -> DiskCounters {
+        DiskCounters(
+            bytesRead: bytesRead,
+            bytesWritten: bytesWritten,
+            readOperations: reads,
+            writeOperations: writes,
+            readTimeNanoseconds: readTime,
+            writeTimeNanoseconds: writeTime,
+            readErrors: 0,
+            writeErrors: 0
         )
     }
 

@@ -8,7 +8,7 @@ package enum PerformanceResourceID: Hashable, Sendable {
     case gpu(registryID: UInt64)
 }
 
-package enum PerformanceResourceKind: Int, Comparable, Sendable {
+package enum PerformanceResourceKind: Int, Comparable, Hashable, Sendable {
     case cpu
     case memory
     case disk
@@ -127,6 +127,7 @@ package struct PerformanceResourceInventory: Sendable {
 
     package mutating func reconcile(
         discovered: [PerformanceResourceDescriptor],
+        managedKinds: Set<PerformanceResourceKind>,
         selectedResource: PerformanceResourceID
     ) {
         let discoveredByID = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, $0) })
@@ -135,8 +136,7 @@ package struct PerformanceResourceInventory: Sendable {
             recordsByID[descriptor.id] = PerformanceResourceRecord(descriptor: descriptor)
         }
 
-        for record in Array(recordsByID.values) where record.descriptor.kind != .cpu
-            && record.descriptor.kind != .memory
+        for record in Array(recordsByID.values) where managedKinds.contains(record.descriptor.kind)
             && discoveredByID[record.id] == nil {
             switch record.descriptor.kind {
             case .disk where record.id != selectedResource:

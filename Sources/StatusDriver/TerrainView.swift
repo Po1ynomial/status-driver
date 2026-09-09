@@ -116,9 +116,10 @@ private struct ResourceRow: View {
         }
         let percentage = Int((reading.value * 100).rounded())
 
-        guard descriptor.id == .memory,
-              let installedMemoryBytes,
-              installedMemoryBytes > 0 else {
+        if descriptor.kind == .disk {
+            return "\(percentage)%"
+        }
+        guard descriptor.kind == .memory, let installedMemoryBytes, installedMemoryBytes > 0 else {
             return "\(percentage)%"
         }
         let usedBytes = UInt64(Double(installedMemoryBytes) * reading.value)
@@ -182,7 +183,7 @@ private struct PerformanceDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 detailHeader
-                Text(telemetry.selectedResource == .cpu ? "% Utilization" : "Memory usage")
+                Text(graphLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -209,21 +210,30 @@ private struct PerformanceDetailView: View {
                     .foregroundStyle(.secondary)
                 }
 
-                if telemetry.selectedResource == .memory {
+                if selectedDescriptor.kind == .memory {
                     MemoryCompositionView(details: memoryDetails)
                 }
 
-                if telemetry.selectedResource == .cpu {
+                switch selectedDescriptor.kind {
+                case .cpu:
                     CPUStatisticsView(
                         reading: telemetry.latestCPUReading,
                         profile: telemetry.hardwareProfile,
                         activity: telemetry.systemActivity
                     )
-                } else {
+                case .memory:
                     MemoryStatisticsView(
                         reading: telemetry.latestMemoryReading,
                         profile: telemetry.hardwareProfile
                     )
+                case .disk:
+                    DiskTransferView(
+                        samples: telemetry.diskTransferHistories[telemetry.selectedResource] ?? [],
+                        details: diskDetails
+                    )
+                    DiskStatisticsView(details: diskDetails)
+                case .network, .gpu:
+                    EmptyView()
                 }
             }
             .padding(24)
@@ -251,7 +261,7 @@ private struct PerformanceDetailView: View {
         case .memory:
             telemetry.hardwareProfile?.installedMemoryBytes.map(formatBytes) ?? "Memory"
         case .disk:
-            "Disk"
+            diskDetails?.identity.model ?? "Disk"
         case .network:
             "Network"
         case .gpu:
@@ -279,12 +289,145 @@ private struct PerformanceDetailView: View {
         }
     }
 
+    private var graphLabel: String {
+        switch selectedDescriptor.kind {
+        case .cpu:
+            "% Utilization"
+        case .memory:
+            "Memory usage"
+        case .disk:
+            "Activity"
+        case .network:
+            "Throughput"
+        case .gpu:
+            "Device utilization"
+        }
+    }
+
     private var selectedDescriptor: PerformanceResourceDescriptor {
         telemetry.descriptor(for: telemetry.selectedResource) ?? .cpu
     }
 
     private var selectedColor: Color {
         selectedDescriptor.colorRole.tint
+    }
+
+    private var diskDetails: DiskDetails? {
+        guard case let .disk(details)? = selectedReading?.details else { return nil }
+        return details
+    }
+
+    private var selectedReading: MetricReading? {
+        telemetry.reading(for: telemetry.selectedResource)
+    }
+}
+
+private struct DiskTransferView: View {
+    let samples: [DiskTransferSample]
+    let details: DiskDetails?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Disk transfer rate")
+                Spacer()
+                Text(bytesPerSecond(details?.transferCeilingBytesPerSecond))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Canvas { context, size in
+                drawSeries(
+                    samples.map { ($0.timestamp, $0.readBytesPerSecond) },
+                    color: PerformanceColorRole.disk.tint,
+                    context: &context,
+                    size: size
+                )
+                drawSeries(
+                    samples.map { ($0.timestamp, $0.writeBytesPerSecond) },
+                    color: PerformanceColorRole.disk.tint.opacity(0.55),
+                    context: &context,
+                    size: size
+                )
+            }
+            .frame(height: 88)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+            .overlay {
+                Rectangle().stroke(PerformanceColorRole.disk.tint.opacity(0.55), lineWidth: 1)
+            }
+
+            HStack {
+                Text("60 seconds")
+                Spacer()
+                Text("0")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func drawSeries(
+        _ values: [(TimeInterval, Double)],
+        color: Color,
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        guard values.count >= 2, let latest = values.last?.0 else { return }
+        let ceiling = max(1, details?.transferCeilingBytesPerSecond ?? 1)
+        var path = Path()
+        for (index, value) in values.enumerated() {
+            let x = CGFloat((value.0 - (latest - 60)) / 60) * size.width
+            let normalized = min(max(value.1 / ceiling, 0), 1)
+            let y = (1 - CGFloat(normalized)) * size.height
+            if index == 0 {
+                path.move(to: CGPoint(x: x, y: y))
+            } else {
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        context.stroke(path, with: .color(color), lineWidth: 1.4)
+    }
+}
+
+private struct DiskStatisticsView: View {
+    let details: DiskDetails?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 34) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)],
+                alignment: .leading,
+                spacing: 16
+            ) {
+                PrimaryStatistic(label: "Activity", value: percent(details?.activity))
+                PrimaryStatistic(
+                    label: "Average response",
+                    value: milliseconds(details?.averageResponseMilliseconds)
+                )
+                PrimaryStatistic(label: "Read speed", value: bytesPerSecond(details?.readBytesPerSecond))
+                PrimaryStatistic(label: "Write speed", value: bytesPerSecond(details?.writeBytesPerSecond))
+                PrimaryStatistic(label: "Read operations", value: rate(details?.readOperationsPerSecond))
+                PrimaryStatistic(label: "Write operations", value: rate(details?.writeOperationsPerSecond))
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 7) {
+                DetailRow(label: "Model", value: details?.identity.model ?? "-")
+                DetailRow(label: "Capacity", value: bytes(details?.identity.capacityBytes))
+                DetailRow(label: "Type", value: diskType(details?.identity))
+                DetailRow(
+                    label: "System disk",
+                    value: details.map { $0.identity.isSystemDisk ? "Yes" : "No" } ?? "-"
+                )
+                if let details, details.readErrorDelta + details.writeErrorDelta > 0 {
+                    DetailRow(
+                        label: "Errors",
+                        value: "R \(details.readErrorDelta) / W \(details.writeErrorDelta)"
+                    )
+                }
+            }
+        }
+        .padding(.top, 4)
     }
 }
 
@@ -508,6 +651,33 @@ private extension PerformanceColorRole {
 private func percentage(_ reading: MetricReading?) -> String {
     guard reading?.availability == .available, let value = reading?.value else { return "-" }
     return "\(Int((value * 100).rounded()))%"
+}
+
+private func percent(_ value: Double?) -> String {
+    value.map { "\(Int(($0 * 100).rounded()))%" } ?? "-"
+}
+
+private func bytesPerSecond(_ value: Double?) -> String {
+    guard let value else { return "-" }
+    return "\(formatBytes(UInt64(max(0, value))))/s"
+}
+
+private func milliseconds(_ value: Double?) -> String {
+    guard let value else { return "-" }
+    return String(format: "%.1f ms", value)
+}
+
+private func rate(_ value: Double?) -> String {
+    guard let value else { return "-" }
+    return String(format: "%.0f/s", value)
+}
+
+private func diskType(_ identity: DiskIdentity?) -> String {
+    guard let identity else { return "-" }
+    if identity.isRemovable { return "Removable" }
+    if identity.isSolidState == true { return "SSD" }
+    if identity.isSolidState == false { return "Disk" }
+    return "-"
 }
 
 private func count(_ value: Int?) -> String {

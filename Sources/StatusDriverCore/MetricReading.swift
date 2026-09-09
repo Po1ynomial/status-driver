@@ -7,6 +7,7 @@ package enum MetricAvailability: Equatable, Sendable {
 
 package enum MetricReadingDetails: Equatable, Sendable {
     case memory(MemoryDetails)
+    case disk(DiskDetails)
 }
 
 package struct MetricReading: Equatable, Sendable {

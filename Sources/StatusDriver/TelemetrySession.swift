@@ -15,6 +15,10 @@ final class TelemetrySession: ObservableObject {
     @Published private(set) var systemActivity: SystemActivitySnapshot?
     @Published private(set) var cpuHistory: [MetricSample] = []
     @Published private(set) var memoryHistory: [MetricSample] = []
+    @Published private(set) var resourceReadings: [PerformanceResourceID: MetricReading] = [:]
+    @Published private(set) var resourceHistories: [PerformanceResourceID: [MetricSample]] = [:]
+    @Published private(set) var diskTransferHistories:
+        [PerformanceResourceID: [DiskTransferSample]] = [:]
 
     let sourceMode: MetricSourceMode
     private var selection = MetricSelectionState()
@@ -37,24 +41,43 @@ final class TelemetrySession: ObservableObject {
         latestMemoryReading = nil
         cpuHistory = []
         memoryHistory = []
+        resourceReadings = [:]
+        resourceHistories = [:]
+        diskTransferHistories = [:]
         interfaceHistories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 65)
         hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
         async let activityResult: Void = consumeSystemActivity()
+        async let diskResult: Void = consumeDisks(scene: scene)
         await consumeMetrics(scene: scene)
         _ = await activityResult
+        _ = await diskResult
     }
 
     func reading(for resource: PerformanceResourceID) -> MetricReading? {
-        switch resource {
+        let reading: MetricReading? = switch resource {
         case .cpu:
             latestCPUReading
         case .memory:
             latestMemoryReading
-        case .disk, .network, .gpu:
-            nil
+        case .disk:
+            resourceReadings[resource]
+        case .network, .gpu:
+            resourceReadings[resource]
         }
+        guard let reading,
+              let record = resources.first(where: { $0.id == resource }),
+              record.availability != .available else {
+            return reading
+        }
+        return MetricReading(
+            timestamp: reading.timestamp,
+            value: reading.value,
+            resource: reading.resource,
+            availability: .unavailable,
+            details: reading.details
+        )
     }
 
     func descriptor(for resource: PerformanceResourceID) -> PerformanceResourceDescriptor? {
@@ -68,7 +91,7 @@ final class TelemetrySession: ObservableObject {
         case .memory:
             memoryHistory
         case .disk, .network, .gpu:
-            []
+            resourceHistories[resource] ?? []
         }
     }
 
@@ -91,7 +114,7 @@ final class TelemetrySession: ObservableObject {
         case .memory:
             memoryHistory.count >= 2
         case .disk, .network, .gpu:
-            false
+            (resourceHistories[resource]?.count ?? 0) >= 2
         }
         var candidate = selection
         guard hasHistory, candidate.select(resource, availability: availability) else {
@@ -134,6 +157,58 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
+    private func consumeDisks(scene: TerrainScene) async {
+        let clock = ContinuousSamplingClock()
+        let liveMonitor = DiskMonitor()
+        let syntheticMonitor = SyntheticDiskMonitor()
+
+        while !Task.isCancelled {
+            let timestamp = await clock.elapsedTime()
+            let update: DiskMonitorUpdate
+            switch sourceMode {
+            case .live:
+                update = await liveMonitor.sample(at: timestamp)
+            case .synthetic:
+                update = await syntheticMonitor.sample(at: timestamp)
+            }
+            reconcileDiskResources(update.descriptors)
+            for reading in update.readings {
+                resourceReadings[reading.resource] = reading
+                ingest(reading, into: scene)
+                appendDiskTransfer(reading)
+            }
+
+            do {
+                try await clock.sleep(for: .seconds(1))
+            } catch {
+                break
+            }
+        }
+    }
+
+    private func reconcileDiskResources(_ descriptors: [PerformanceResourceDescriptor]) {
+        inventory.reconcile(
+            discovered: descriptors,
+            managedKinds: [.disk],
+            selectedResource: selectedResource
+        )
+        resources = inventory.records
+    }
+
+    private func appendDiskTransfer(_ reading: MetricReading) {
+        guard case let .disk(details)? = reading.details else { return }
+        var samples = diskTransferHistories[reading.resource] ?? []
+        samples.append(
+            DiskTransferSample(
+                timestamp: reading.timestamp,
+                readBytesPerSecond: details.readBytesPerSecond,
+                writeBytesPerSecond: details.writeBytesPerSecond
+            )
+        )
+        samples.removeAll { $0.timestamp < reading.timestamp - 60 }
+        diskTransferHistories[reading.resource] = samples
+    }
+
     private func ingest(_ reading: MetricReading, into scene: TerrainScene) {
         let update = interfaceHistories.ingestUpdate(reading)
         guard update.wasAccepted else { return }
@@ -146,7 +221,7 @@ final class TelemetrySession: ObservableObject {
         case .memory:
             memoryHistory = interfaceHistories.samples(for: .memory)
         case .disk, .network, .gpu:
-            break
+            resourceHistories[reading.resource] = interfaceHistories.samples(for: reading.resource)
         }
     }
 }

@@ -4,10 +4,11 @@
 
 - `swift run StatusDriver` opens a native macOS Performance split view and collects aggregate CPU and reclaimability-aware memory concurrently.
 - `swift run StatusDriver -- --synthetic` creates independent random CPU and memory channels and marks the sidebar `Synthetic data`.
-- The resizable and collapsible sidebar contains only CPU and Memory, with current summaries and 60-second sparklines.
+- The resizable sidebar contains CPU, Memory, and discovered whole physical disks with current summaries and 60-second sparklines.
 - Sidebar clicks are the only resource-selection method.
 - The CPU detail page shows chip name, utilization, process and best-effort thread counts, uptime, packages, cores, performance-level topology and caches, logical processors, and virtualization support.
 - The Memory detail page shows installed, in-use, available, app, wired, compressed, file-cache, and unified-memory values plus a composition bar.
+- Each Disk detail page shows Activity terrain, a current adaptive read/write transfer graph, model, physical capacity, type, root-disk status, response time, byte rates, operation rates, and nonzero errors.
 - CPU uses blue and Memory uses violet across sparklines, graph border, terrain, fill, and composition. The interface follows system light or dark appearance.
 - An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU uses wrapping Mach tick deltas. Memory uses Mach VM statistics, `hw.memsize`, and `(internal - purgeable + wired + compressor) / physical pages`.
@@ -31,12 +32,14 @@
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines driving, reset, and global easter-egg-toggle input.
+- `Sources/StatusDriverCore/DiskPerformance.swift` discovers IOKit whole disks and calculates service-time Activity, transfer, operation, response, error, scale, and identity data.
 - `Sources/StatusDriverCore/MemoryUsage.swift` defines VM reads, raw and derived Memory details, bounded composition, and the Memory producer.
 - `Sources/StatusDriverCore/MetricHistoryStore.swift` owns independent rolling histories and selection rules.
 - `Sources/StatusDriverCore/MetricReading.swift` defines metric identity, availability, detail payloads, paired snapshots, source mode, and startup gating.
 - `Sources/StatusDriverCore/MetricStream.swift` defines paired producers, clocks, bounded streaming, concurrent live production, and dual synthetic production.
 - `Sources/StatusDriverCore/PerformanceDetails.swift` defines hardware profiles, sysctl mapping, process and thread enumeration, uptime, and the one-second secondary stream.
 - `Sources/StatusDriverCore/PerformanceResource.swift` defines stable dynamic IDs, descriptors, ordering, colors, graph/utility policies, discovery reconciliation, adaptive scale, and global easter-egg state.
+- `Sources/StatusDriverCore/SyntheticDiskPerformance.swift` emits deterministic coherent Disk 0 activity and detail data.
 - `Sources/StatusDriverCore/RollingSampleBuffer.swift` owns flat prefill, ordered retention, and pruning for one metric.
 - `Sources/StatusDriverCore/TerrainGeometry.swift` maps the 60-second timeline and creates separate visible and collision paths.
 - `Sources/StatusDriverModelTests/StatusDriverModelTests.swift` runs automated checks without Xcode test frameworks.
@@ -48,18 +51,19 @@
 3. Concurrent live or dual synthetic producers emit paired CPU and Memory readings every 150 ms.
 4. The session appends one immutable average per completed second, publishes that committed history for sparklines, and sends the same inputs to SpriteKit. Open buckets remain internal.
 5. A separate one-second stream publishes process count, best-effort thread count, and uptime.
-6. Native sidebar selection updates shared application state, then switches the SpriteKit terrain and graph colors.
-7. The detail page reads the selected metric, hardware profile, raw Memory detail, and one-second activity without delaying graph updates.
-8. The graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second.
-9. Finalized points are created offscreen right and never change after entering view. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
-10. `C` toggles one application-owned session state. The selected resource descriptor maps enabled state to a utility; CPU and Memory currently map to Car.
-11. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
+6. A Disk monitor walks IOKit once per second, refreshes discovered whole-disk identity every five seconds, and publishes reset-safe Activity and transfer details.
+7. Native sidebar selection updates shared application state, then switches the SpriteKit terrain and graph colors.
+8. The detail page reads the selected resource, hardware profile, raw Memory or Disk detail, and supporting current-time graph data without delaying terrain updates.
+9. The graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second.
+10. Finalized physical points are created offscreen right and never change after entering view. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
+11. `C` toggles one application-owned session state. CPU, Memory, and Disk currently map enabled state to Car.
+12. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
 
 ## Inspection
 
 - Run `swift build` to compile every package target.
 - Run `swift run StatusDriverModelTests` to execute terrain, telemetry, detail, hardware, secondary stream, selection, cancellation, and live system checks.
-- Run `swift run StatusDriver`; inspect both sidebar rows and detail pages and compare values with `top`, `vm_stat`, and `sysctl` when useful.
+- Run `swift run StatusDriver`; inspect CPU, Memory, and Disk rows and compare values with `top`, `vm_stat`, `ioreg`, and `iostat` when useful.
 - Select CPU and Memory by click; verify the detail page, terrain color, collision, and car reset change together. Number keys should not select resources.
 - Collapse and restore the sidebar with its native title-bar control. Resize the sidebar and window near their provisional bounds.
 - Change system appearance and verify native controls, text, graph, sparklines, composition, and car remain legible.
@@ -71,7 +75,8 @@
 
 - Thread count is best effort and may undercount protected or exiting processes.
 - Memory is a project-defined occupancy estimate, not exact Activity Monitor accounting. Pressure and swap are absent.
-- The interface has no process list, per-core graph, disk, network, history controls, or persisted telemetry.
+- Disk system status assumes the only nonremovable physical disk is the root disk when no direct APFS physical-store mapping is available.
+- The interface has no process list, per-core graph, Network, GPU, history controls, or persisted telemetry.
 - The package targets macOS 26 and has no bundle, signing, or distribution setup.
 - This Command Line Tools installation has neither a usable `Testing` module nor `XCTest`. Automated checks use a normal executable target rather than `swift test`.
 - SpriteKit may occasionally log `SKView: no drawables available for rendering. Skipping this frame.` A lone skipped-frame diagnostic is harmless when animation and input remain smooth.
