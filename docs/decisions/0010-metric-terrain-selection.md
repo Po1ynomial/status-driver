@@ -1,6 +1,6 @@
 # 0010 - Select terrain from a compact metric strip
 
-- **Status:** Accepted; compact-strip presentation superseded by [0011](0011-performance-interface-structure.md)
+- **Status:** Accepted; presentation superseded by [0011](0011-performance-interface-structure.md), number shortcuts superseded by [0014](0014-dynamic-performance-resources.md)
 - **Date:** 2026-09-07
 
 ## Decision

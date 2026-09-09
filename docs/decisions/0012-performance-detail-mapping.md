@@ -1,6 +1,6 @@
 # 0012 - Map performance details to honest macOS data
 
-- **Status:** Accepted
+- **Status:** Accepted; additional detail pages defined by [0015](0015-disk-performance.md), [0016](0016-network-performance.md), and [0017](0017-gpu-performance.md)
 - **Date:** 2026-09-08
 
 ## Decision

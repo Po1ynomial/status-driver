@@ -12,12 +12,15 @@ The application targets the owner's current macOS 26.2 machine. It may use conve
 
 The Windows Task Manager Performance page is the structural reference. Status Driver opens directly into the Performance view because no other section has implemented content.
 
-The native macOS sidebar contains two rows:
+The native macOS sidebar contains only discovered and implemented resources in this order:
 
 - CPU with a blue 60-second sparkline and current utilization.
 - Memory with a violet 60-second sparkline and used, total, and percentage summary.
+- Whole physical disks with green Activity sparklines.
+- Physical Network interfaces with warm adaptive-throughput sparklines.
+- GPU with a cyan-blue Device Utilization sparkline when the required property exists.
 
-CPU is selected by default. Clicking a row or pressing `1` or `2` changes the selected resource and terrain. Do not add placeholder rows for unimplemented resources.
+CPU is selected by default. Clicking a row changes the selected resource. There are no number-key resource shortcuts or unsupported placeholder rows.
 
 The detail pane has the selected resource title, a hardware summary aligned at the upper-right, one large graph, and Task Manager-style statistics below. Memory adds a composition bar between its graph and statistics.
 
@@ -29,11 +32,23 @@ The sidebar starts around 220 points wide, resizes provisionally between 190 and
 
 An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the session ends. Missed timer deadlines do not generate backfill readings.
 
-CPU and memory each maintain independent calculation, availability, 0.75-second exponential moving average, and 60-second history. A read failure in one metric does not affect the other.
+Every resource maintains independent calculation, availability, filtering, and history. A read or discovery failure in one resource does not affect another.
 
 Keep 150 ms readings for current values and detail data, but resample graph history into one-second buckets. Each closed bucket appends one immutable point containing the arithmetic mean of its filtered readings. Open-bucket values are never exposed to sparklines, drawing, or collision. Do not generate empty catch-up buckets after suspension or sampling gaps.
 
-Default launch uses genuine telemetry. Passing `--synthetic` creates two independent random channels and visibly marks the data as synthetic. Runtime failures never change source mode.
+Default launch uses genuine telemetry. Passing `--synthetic` creates the fixed deterministic synthetic resource set and visibly marks the data as synthetic. Runtime failures never change source mode.
+
+Synthetic mode exposes deterministic CPU, Memory, Disk 0, Wi-Fi, and GPU resources. Each resource uses its own stable seed and emits detail values coherent with its primary graph.
+
+## Dynamic resource lifecycle
+
+Use a general resource identity with fixed CPU and Memory cases, IOKit registry ID plus whole BSD disk name for Disk, BSD interface name for Network, and IOKit registry ID for GPU.
+
+Discover all resources immediately. Reconcile disks and physical interfaces every five seconds. Retry GPU discovery every five seconds only while missing or unavailable. Preserve histories, colors, selection, and metadata by stable identity.
+
+A selected removed resource remains visible as unavailable until another resource is selected. An unselected removed disk disappears. A known physical interface remains listed as `Disconnected`. Newly attached resources enter the accepted sidebar order.
+
+Resource descriptors include graph timing class, color role, detail type, availability, and easter-egg utility policy.
 
 ## Main graph and terrain
 
@@ -41,7 +56,7 @@ The selected graph displays a 60-second span across its current width with a fix
 
 Move the viewport with source time minus one second. A bucket therefore finalizes offscreen right before any of its geometry enters view. Keep real history beyond both visible edges when available, then add a hidden flat collision extension after the newest finalized point. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
 
-The selected history produces the line, fill, and collision terrain from the same mapped points. CPU uses blue and Memory uses violet. The SpriteKit stroke retains butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear paths.
+For physical resources, the selected history produces line, fill, and collision terrain from the same mapped points. CPU uses blue, Memory violet, Disk green, and GPU cyan-blue. The SpriteKit stroke retains butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear paths.
 
 Sidebar sparklines consume the same resampled histories through lightweight SwiftUI drawing. They have no collision or vehicle nodes.
 
@@ -88,33 +103,93 @@ The composition bar partitions physical memory into app, wired, compressed, and 
 
 Do not display committed memory, paged pool, non-paged pool, speed, slots, hardware reserved, memory pressure, or swap in this milestone.
 
+## Disk performance
+
+Discover whole physical media and read cumulative IOBlockStorageDriver statistics for read/write bytes, operations, total service time, and errors.
+
+Calculate the fixed-scale physical terrain:
+
+```text
+service time = delta(total read time) + delta(total write time)
+activity = clamp(service time / wall-clock interval, 0, 1)
+```
+
+Counter decreases cause rebaselining. Zero deltas produce available zero activity. Apply 0.75-second filtering and the immutable one-second terrain history.
+
+The detail page has model, physical capacity, SSD/removable type, root-system-disk status, Activity, average response time, read/write rates, operation rates, and nonzero error deltas. It omits formatted capacity and page-file status.
+
+Add a smaller nonphysical current-time transfer graph with separate read and write lines. It uses this adaptive ceiling ladder:
+
+```text
+1 MB/s, 10 MB/s, 100 MB/s, 500 MB/s, 1 GB/s, 2 GB/s, 5 GB/s, 10 GB/s
+```
+
+Raise immediately above 90 percent and lower after 30 seconds with both rates below 20 percent.
+
+## Network performance
+
+Discover physical hardware ports and map them to BSD interfaces. Include physical Wi-Fi and Ethernet. Exclude loopback, tunnel, bridge, AWDL, and system-only interfaces.
+
+Read cumulative 64-bit byte, packet, error, and drop counters once per second. Counter decreases cause rebaselining. Derive send, receive, combined throughput, packet rates, and error/drop deltas.
+
+The main Network graph is nonphysical SwiftUI content. It plots combined throughput through current time and normalizes against:
+
+```text
+100 KB/s, 1 MB/s, 10 MB/s, 100 MB/s, 1 GB/s, 10 GB/s
+```
+
+Start at 1 MB/s. Raise immediately above 90 percent and lower after 30 seconds below 20 percent. Adaptive rescaling may redraw visible Network history because it has no collision.
+
+Show hardware-port name, BSD name, state, adaptive ceiling, send/receive/combined rates, packet rates, nonzero errors/drops, trustworthy link speed, and IP addresses. Omit SSID, signal, channel, PHY mode, and MAC address.
+
+## GPU performance
+
+Discover an IOKit graphics service only when its `PerformanceStatistics` dictionary contains `Device Utilization %`. Treat the key names as an experimental current-Mac dependency.
+
+Use normalized Device Utilization as fixed-scale physical terrain with 0.75-second filtering and immutable one-second history. Show Renderer and Tiler utilization and in-use system memory when present. Show Metal and unified-memory metadata.
+
+Omit GPU memory graphs or capacity ratios, frequency, temperature, power, DirectX data, PCI location, driver date, and Windows driver version. Hide an undiscoverable GPU. Retry a failed or missing source every five seconds.
+
+## Adaptive graph scale
+
+Nonphysical Network and Disk transfer graphs use discrete ceilings with shared hysteresis:
+
+- Raise immediately when the current maximum exceeds 90 percent.
+- Lower one ladder step only after 30 seconds continuously below 20 percent.
+- Preserve scale state by stable resource identity.
+
+Scale changes may redraw nonphysical history. They never alter committed physical terrain.
+
 ## Refresh tiers
 
-- CPU, Memory, raw VM fields, main graph, and sparklines update every 150 ms.
+- CPU, Memory, and raw VM fields update every 150 ms.
+- Disk, Network, and GPU sample independently every one second.
+- Physical graph histories commit immutable one-second averages. Network and Disk transfer graphs update through current time.
+- Disk and Network discovery runs every five seconds. GPU retries every five seconds only while absent or unavailable.
 - Processes, best-effort threads, and uptime update once per second.
-- Hardware metadata loads once per application session.
+- Resource hardware metadata loads on discovery and refreshes only when identity changes.
 
 Slow or failed secondary data never blocks graph sampling and only blanks its own field.
 
 ## Vehicle easter egg
 
-The car is hidden by default on every launch. There is no visible help, hint, toolbar item, tooltip, or first-run message for driving.
+The global easter-egg toggle is hidden and disabled on every launch. It persists across resource selection for the application session but is not written to disk. There is no visible help, hint, toolbar item, tooltip, or first-run message.
 
-Pressing `C` creates the car above the selected terrain at graph center. Pressing `C` again removes its chassis, wheels, joints, and physics state. Driving and reset input have no effect while it is absent. Showing it after a selection change uses the current terrain.
+Pressing `C` toggles the global state from any selected resource. CPU, Memory, Disk, and GPU map enabled state to Car. Network maps enabled state to None in this milestone.
+
+Selecting Network removes a visible car but keeps global state enabled. Selecting a physical resource again recreates the car automatically. Driving and reset input have no effect when the current utility is None or global state is disabled.
 
 Existing hidden controls remain:
 
 - `Right` or `D`: drive right.
 - `Left` or `A`: brake rightward movement, then drive left.
 - `R`: reset.
-- `1`: select CPU.
-- `2`: select Memory.
 - `C`: toggle the car.
 
-Selection and graph-geometry changes reset a visible car. A hidden car remains hidden. Automatic offscreen reset uses the graph rectangle, not the application window. Clicking the graph restores keyboard focus after sidebar interaction.
+Selection and graph-geometry changes reset the active car. Automatic offscreen reset uses the graph rectangle, not the application window. Clicking a physical graph restores keyboard focus after sidebar interaction.
 
 ## Inspection and checks
 
-`swift run StatusDriverModelTests` covers telemetry calculations, hardware and secondary detail parsing, partial failures, independent histories, 60-second chart mapping, selection, hidden collision extension, vehicle visibility state, scheduling, cancellation, and live system reads.
+`swift run StatusDriverModelTests` covers telemetry calculations, counter rollover and reset, adaptive hysteresis, discovery reconciliation, interface filtering, stable identity/color, hot-plug rules, independent failure, synthetic coherence, timing classes, easter-egg dispatch, immutable histories, scheduling, cancellation, and live system reads.
 
-Manual inspection covers CPU and Memory pages, sidebar sparklines and collapse, both appearances, current-time graph labels, detail values, Memory composition, resize behavior, selection, telemetry failure isolation, and the hidden car lifecycle and controls.
+Manual inspection covers every resource page, colors, scale changes, hot-plug behavior where practical, both appearances, physical terrain, nonphysical Network behavior, global easter-egg persistence, resize behavior, and bounded retention.

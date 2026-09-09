@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a standalone macOS activity monitor whose statistical curves also act as terrain for a keyboard-controlled car. The monitor is the primary product. Driving is an undisclosed easter egg rather than a game objective.
+Build a standalone macOS activity monitor whose statistical curves can also become surfaces for hidden resource-specific easter eggs. The monitor is the primary product. The current car is one undisclosed easter-egg utility rather than a game objective.
 
 ## Users
 
@@ -10,67 +10,68 @@ The initial audience is the project's owner. This is a personal, entertaining ma
 
 ## Current milestone
 
-Turn the CPU and Memory prototype into a recognizable activity-monitor interface. Follow the Windows Task Manager Performance layout and translate its controls, typography, appearance, and window behavior to native macOS conventions.
+Extend the Task Manager-style Performance interface with physical disks, physical network interfaces, and best-effort GPU telemetry. Preserve honest macOS semantics, stable resource identity, immutable physical terrain, and one global hidden easter-egg toggle.
 
 ## In scope
 
-- A native split view with CPU and Memory resource rows.
-- Sixty-second sidebar sparklines and one selected detail graph.
-- Task Manager-style CPU and Memory detail statistics that map honestly to public macOS data.
-- Reclaimability-aware memory composition.
-- CPU blue and Memory violet visual identities.
-- Automatic light and dark appearance.
-- A committed 60-second graph ending one second behind live telemetry with hidden offscreen collision support.
-- A hidden-by-default car toggled with `C`.
-- Existing terrain selection, driving, resize, and reset behavior.
+- Immediate and five-second discovery of whole physical disks and physical network interfaces.
+- One-second independent sampling for Disk, Network, and GPU.
+- Disk service-time activity terrain plus current adaptive transfer-rate graph.
+- Adaptive combined-throughput Network graphs with per-interface detail.
+- Best-effort experimental GPU utilization and detail from current IOKit registry properties.
+- Dynamic sidebar rows with stable identity, ordering, colors, failure state, and hot-plug behavior.
+- Deterministic synthetic Disk 0, Wi-Fi, and GPU resources.
+- A session-wide hidden easter-egg toggle with per-resource utility dispatch.
 
 ## Out of scope for the current milestone
 
-- Task Manager sections other than Performance.
-- Placeholder rows for Disk, Network, GPU, processes, or other unimplemented resources.
-- Current or baseline CPU speed and Windows handle counts.
-- Windows committed memory, paged pool, non-paged pool, memory speed, slots, or hardware-reserved fields.
-- Memory pressure, swap, per-core graphs, process lists, disk, or network telemetry.
-- Visible driving help, control hints, game objectives, or HUD.
-- Persisted telemetry history.
-- Application bundling, signing, notarization, or distribution.
+- Virtual, loopback, bridge, tunnel, AWDL, and other system-only Network rows.
+- Wi-Fi SSID, signal, channel, or PHY mode and their permission requirements.
+- GPU frequency, temperature, power, fixed memory capacity, or memory graph.
+- Root helpers, `powermetrics`, shell-command parsing, or privileged acquisition.
+- Disk formatted capacity and page-file fields.
+- New easter-egg utilities for Network or other future resources.
+- Number-key resource shortcuts, configurable shortcuts, or visible easter-egg help.
+- Process lists, persistence, packaging, signing, or outer application navigation.
 
 ## Constraints
 
-- The Windows Task Manager Performance page is the information-layout reference.
-- Native macOS components and behavior take precedence over copying Windows chrome.
-- The sidebar contains only implemented resources and can resize or collapse using macOS behavior.
-- CPU and Memory retain independent telemetry, availability, smoothing, and history.
-- The main graph and sidebar sparklines show the same truthful 60-second history.
-- Terrain points finalize before entering view and never change afterward. Fabricated flat terrain may exist only outside the visible right edge for collision safety.
-- SpriteKit is limited to the main graph area.
-- Secondary detail failures never mark terrain telemetry unavailable.
-- The car remains absent until the user presses `C` and has no in-application documentation.
-- The monitor remains useful with the car hidden.
+- Resource order is CPU, Memory, whole physical disks, physical network interfaces, then GPU.
+- Stable resource identity preserves history, color, selection, and details across discovery refreshes.
+- CPU and Memory retain their 150 ms collection; new resources sample once per second.
+- Resource discovery runs every five seconds without blocking sampling or rendering.
+- Physical CPU, Memory, Disk Activity, and GPU graphs expose immutable one-second terrain from 61 to 1 seconds ago.
+- Adaptive Network and Disk transfer graphs are nonphysical and may redraw current visible history through `0`.
+- Network has no easter-egg utility in this milestone.
+- The global `C` toggle persists across resource selection for the session but starts off on each launch.
+- No runtime failure silently changes resource, source mode, graph scale policy, or easter-egg state.
+- The app uses public unprivileged APIs where documented; GPU registry properties are an explicit current-Mac best-effort exception.
 
 ## Success conditions
 
-- The app opens directly into a native Performance split view with CPU selected.
-- The sidebar shows only CPU and Memory, each with current value and 60-second sparkline.
-- Clicks and `1`/`2` select the matching resource and main terrain.
-- CPU details show chip name, utilization, processes, best-effort threads, uptime, packages, core topology, logical processors, virtualization support, and available cache topology.
-- CPU omits speed, base speed, handles, and unavailable cache levels.
-- Memory details show installed, in use, available, app, wired, compressed, file-cache, and unified-memory values plus a composition bar.
-- Memory omits fields without honest macOS mappings.
-- Main graph labels describe the committed 60-second span from `61 seconds` to `1 second`; current numeric values remain live.
-- CPU uses blue, Memory uses violet, and the interface supports native light and dark appearances.
-- Fast telemetry remains at 150 ms, process/thread/uptime details refresh once per second, and hardware metadata loads once.
-- The default window is about `1200 x 700`; a provisional minimum near `900 x 600` keeps the graph usable.
-- The car is hidden on launch. `C` creates or removes it inside the graph without affecting telemetry.
-- Selection and geometry-changing resize reset a visible car. A hidden car remains hidden.
-- Automated checks cover detail calculations, partial metadata, secondary failure isolation, 60-second chart mapping, hidden collision support, and car visibility state.
-- Manual checks cover both appearances, sidebar behavior, both detail pages, live timing, composition, selection, resizing, and all hidden car controls.
+- Default launch immediately discovers available Disk, physical Network, and GPU resources, then reconciles Disk and Network every five seconds.
+- CPU and Memory behavior remains unchanged except removal of `1` and `2` shortcuts.
+- Disk Activity uses clamped read-plus-write service-time deltas over wall time and zero activity remains available.
+- Disk detail shows model, physical capacity, type, root-disk status, activity, response time, read/write speed, and operation rates.
+- A nonphysical Disk transfer graph ends at now, plots read and write separately, and uses stable adaptive scale hysteresis.
+- Network detail shows hardware port, BSD name, state, adaptive ceiling, send/receive/combined rates, packet rates, errors or drops when nonzero, addresses, and trustworthy link speed when present.
+- Network terrain is absent; its main adaptive SwiftUI graph ends at now.
+- GPU appears only when Device Utilization is discoverable, uses that fixed percentage for terrain, and shows Renderer, Tiler, Metal/unified-memory metadata, and in-use system memory when present.
+- GPU failure keeps a discovered row unavailable and retries discovery without affecting other resources.
+- Removed selected resources remain unavailable until another resource is chosen; removed unselected disks disappear; disconnected physical interfaces remain listed.
+- Disk is green, Wi-Fi orange, Ethernet muted brick red, other physical interfaces use stable warm colors, and GPU is cyan-blue.
+- Synthetic mode contains deterministic CPU, Memory, Disk 0, Wi-Fi, and GPU data with coherent details.
+- Sidebar clicks are the only resource-selection method.
+- Global easter-egg state starts disabled, survives resource changes, maps CPU/Memory/Disk/GPU to Car and Network to None, and remains undisclosed.
+- Automated checks cover counter arithmetic, rollover and reset, adaptive scaling, filtering, discovery reconciliation, interface filtering, stable identity and color, hot-plug rules, independent failures, synthetic coherence, graph timing, and easter-egg dispatch.
+- Live checks compare Disk and Network values with system tools and confirm GPU utilization on the target M4.
+- Manual checks cover all resource pages, colors, scale changes, hot-plug behavior where practical, physical terrain, global `C` behavior, graph boundaries, both appearances, and bounded retention.
 
 ## Open questions
 
-- Which system metric should follow memory, if any?
-- Should memory pressure or swap appear in a later detail expansion?
-- Does the provisional split-view sizing need adjustment after use?
+- Which resource-specific easter egg should Network use later?
+- Should external removable disks receive the car or a different utility?
+- Which additional resource, if any, belongs after GPU?
 - When, if ever, should the project add packaging and distribution?
 
 ## Accepted decisions
@@ -88,3 +89,8 @@ Turn the CPU and Memory prototype into a recognizable activity-monitor interface
 - [Use a Task Manager Performance structure with macOS controls](decisions/0011-performance-interface-structure.md)
 - [Map performance details to honest macOS data](decisions/0012-performance-detail-mapping.md)
 - [Make the car a hidden graph easter egg](decisions/0013-performance-graph-and-car.md)
+- [Discover and reconcile dynamic Performance resources](decisions/0014-dynamic-performance-resources.md)
+- [Use service-time activity for Disk terrain](decisions/0015-disk-performance.md)
+- [Use adaptive nonphysical throughput for Network](decisions/0016-network-performance.md)
+- [Use best-effort IOKit GPU utilization](decisions/0017-gpu-performance.md)
+- [Dispatch one global easter-egg toggle by resource](decisions/0018-resource-easter-eggs.md)

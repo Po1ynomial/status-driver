@@ -1,6 +1,6 @@
 # 0011 - Use a Task Manager Performance structure with macOS controls
 
-- **Status:** Accepted
+- **Status:** Accepted; two-resource list extended by [0014](0014-dynamic-performance-resources.md)
 - **Date:** 2026-09-08
 
 ## Decision
