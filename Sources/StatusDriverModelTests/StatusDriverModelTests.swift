@@ -56,6 +56,9 @@ struct StatusDriverModelTests {
             ("physical network filtering", { physicalNetworkFiltering() }),
             ("network discovery cadence", networkDiscoveryCadence),
             ("synthetic network coherence", syntheticNetworkCoherence),
+            ("network utility classification", { networkUtilityClassification() }),
+            ("network packet flight", { networkPacketFlight() }),
+            ("network packet swept collision", { networkPacketSweptCollision() }),
             ("GPU performance clamping", { gpuPerformanceClamping() }),
             ("GPU rediscovery cadence", gpuRediscoveryCadence),
             ("synthetic GPU coherence", syntheticGPUCoherence),
@@ -986,10 +989,142 @@ struct StatusDriverModelTests {
               let reading = first.readings.first,
               case let .network(details)? = reading.details else { return false }
         return first.descriptors.first?.graphKind == .adaptiveNonphysical
-            && first.descriptors.first?.easterEggUtility == EasterEggUtility.none
+            && first.descriptors.first?.easterEggUtility == .packet
             && details.combinedBytesPerSecond
                 == details.receiveBytesPerSecond + details.sendBytesPerSecond
             && reading.availability == .available
+    }
+
+    private static func networkUtilityClassification() -> Bool {
+        networkEasterEggUtility(for: testNetworkIdentity()) == .packet
+            && networkEasterEggUtility(
+                for: NetworkIdentity(
+                    interfaceName: "en4",
+                    portName: "USB 10/100/1000 LAN",
+                    kind: .ethernet
+                )
+            ) == .packet
+            && networkEasterEggUtility(
+                for: NetworkIdentity(
+                    interfaceName: "en1",
+                    portName: "Thunderbolt 1",
+                    kind: .ethernet
+                )
+            ) == .none
+    }
+
+    private static func networkPacketFlight() -> Bool {
+        let samples = [
+            NetworkThroughputSample(
+                timestamp: 0,
+                receiveBytesPerSecond: 100,
+                sendBytesPerSecond: 0
+            ),
+            NetworkThroughputSample(
+                timestamp: 60,
+                receiveBytesPerSecond: 100,
+                sendBytesPerSecond: 0
+            ),
+        ]
+        let mapping = NetworkGraphMapping(
+            samples: samples,
+            ceiling: 1_000,
+            size: CGSize(width: 600, height: 280)
+        )
+        var flight = NetworkPacketFlight()
+        flight.reset(in: mapping)
+        guard flight.position(in: mapping) == CGPoint(x: 180, y: 182) else { return false }
+
+        flight.flap()
+        flight.update(deltaTime: 1.0 / 60, mapping: mapping)
+        guard case let .flying(height, velocity) = flight.state,
+              height > 182,
+              velocity > 0 else { return false }
+
+        let blocked = NetworkGraphMapping(
+            samples: samples.map {
+                NetworkThroughputSample(
+                    timestamp: $0.timestamp,
+                    receiveBytesPerSecond: 1_000,
+                    sendBytesPerSecond: 0
+                )
+            },
+            ceiling: 1_000,
+            size: CGSize(width: 600, height: 280)
+        )
+        flight.reset(in: blocked)
+        return flight.state == .stuck(timestamp: 18)
+    }
+
+    private static func networkPacketSweptCollision() -> Bool {
+        let initial = NetworkGraphMapping(
+            samples: [
+                NetworkThroughputSample(
+                    timestamp: 0,
+                    receiveBytesPerSecond: 0,
+                    sendBytesPerSecond: 0
+                ),
+                NetworkThroughputSample(
+                    timestamp: 60,
+                    receiveBytesPerSecond: 0,
+                    sendBytesPerSecond: 0
+                ),
+            ],
+            ceiling: 1_000,
+            size: CGSize(width: 600, height: 280)
+        )
+        var flight = NetworkPacketFlight()
+        flight.reset(in: initial)
+
+        let crossedSpike = NetworkGraphMapping(
+            samples: [
+                NetworkThroughputSample(
+                    timestamp: 0,
+                    receiveBytesPerSecond: 0,
+                    sendBytesPerSecond: 0
+                ),
+                NetworkThroughputSample(
+                    timestamp: 18.5,
+                    receiveBytesPerSecond: 900,
+                    sendBytesPerSecond: 0
+                ),
+                NetworkThroughputSample(
+                    timestamp: 61,
+                    receiveBytesPerSecond: 0,
+                    sendBytesPerSecond: 0
+                ),
+            ],
+            ceiling: 1_000,
+            size: CGSize(width: 600, height: 280)
+        )
+        flight.update(deltaTime: 1.0 / 60, mapping: crossedSpike)
+        guard flight.state == .stuck(timestamp: 18.5),
+              let highPosition = flight.position(in: crossedSpike) else { return false }
+
+        let rescaled = NetworkGraphMapping(
+            samples: crossedSpike.samples,
+            ceiling: 2_000,
+            size: crossedSpike.size
+        )
+        guard let lowPosition = flight.position(in: rescaled),
+              lowPosition.y < highPosition.y else { return false }
+
+        let advanced = NetworkGraphMapping(
+            samples: crossedSpike.samples + [
+                NetworkThroughputSample(
+                    timestamp: 81,
+                    receiveBytesPerSecond: 0,
+                    sendBytesPerSecond: 0
+                ),
+            ],
+            ceiling: 1_000,
+            size: crossedSpike.size
+        )
+        flight.update(deltaTime: 1, mapping: advanced)
+        if case .flying = flight.state {
+            return true
+        }
+        return false
     }
 
     private static func gpuPerformanceClamping() -> Bool {

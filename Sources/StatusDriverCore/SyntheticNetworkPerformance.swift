@@ -51,7 +51,7 @@ package actor SyntheticNetworkMonitor {
             kind: .network,
             colorRole: .wifi,
             graphKind: .adaptiveNonphysical,
-            easterEggUtility: .none
+            easterEggUtility: .packet
         )
         return NetworkMonitorUpdate(descriptors: [descriptor], readings: [reading])
     }

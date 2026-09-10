@@ -491,7 +491,7 @@ package actor NetworkMonitor {
                 kind: .network,
                 colorRole: colorRole,
                 graphKind: .adaptiveNonphysical,
-                easterEggUtility: .none
+                easterEggUtility: networkEasterEggUtility(for: identity)
             )
         }
         return NetworkMonitorUpdate(descriptors: descriptors, readings: readings)

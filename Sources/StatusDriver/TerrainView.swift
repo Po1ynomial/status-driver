@@ -2,11 +2,18 @@ import SpriteKit
 import StatusDriverCore
 import SwiftUI
 
+private struct SequencedEasterEggCommand: Equatable {
+    let sequence: Int
+    let command: EasterEggCommand
+}
+
 struct TerrainView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var telemetry: TelemetrySession
     @State private var scene: TerrainScene
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var commandSequence = 0
+    @State private var latestCommand: SequencedEasterEggCommand?
 
     init(telemetry: TelemetrySession) {
         self.telemetry = telemetry
@@ -20,7 +27,11 @@ struct TerrainView: View {
             performanceSidebar
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            PerformanceDetailView(telemetry: telemetry, scene: scene)
+            PerformanceDetailView(
+                telemetry: telemetry,
+                scene: scene,
+                latestCommand: latestCommand
+            )
                 .navigationTitle("Performance")
         }
         .navigationSplitViewStyle(.balanced)
@@ -32,6 +43,11 @@ struct TerrainView: View {
                     telemetry.toggleEasterEgg()
                 default:
                     scene.handle(command)
+                    commandSequence += 1
+                    latestCommand = SequencedEasterEggCommand(
+                        sequence: commandSequence,
+                        command: command
+                    )
                 }
             }
         }
@@ -291,6 +307,7 @@ private struct MetricSparkline: View {
 private struct PerformanceDetailView: View {
     @ObservedObject var telemetry: TelemetrySession
     let scene: TerrainScene
+    let latestCommand: SequencedEasterEggCommand?
 
     var body: some View {
         ScrollView {
@@ -310,8 +327,11 @@ private struct PerformanceDetailView: View {
             NetworkPerformanceView(
                 samples: telemetry.networkThroughputHistories[telemetry.selectedResource] ?? [],
                 details: networkDetails,
-                color: selectedColor
+                color: selectedColor,
+                utility: telemetry.activeEasterEggUtility,
+                latestCommand: latestCommand
             )
+            .id(telemetry.selectedResource)
         } else {
             physicalGraph
 
@@ -508,6 +528,8 @@ private struct NetworkPerformanceView: View {
     let samples: [NetworkThroughputSample]
     let details: NetworkDetails?
     let color: Color
+    let utility: EasterEggUtility
+    let latestCommand: SequencedEasterEggCommand?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -520,21 +542,32 @@ private struct NetworkPerformanceView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Canvas { context, size in
-                guard samples.count >= 2, let latest = samples.last?.timestamp else { return }
-                let ceiling = max(1, details?.graphCeilingBytesPerSecond ?? 1)
-                var path = Path()
-                for (index, sample) in samples.enumerated() {
-                    let x = CGFloat((sample.timestamp - (latest - 60)) / 60) * size.width
-                    let normalized = min(sample.combinedBytesPerSecond / ceiling, 1)
-                    let y = (1 - CGFloat(normalized)) * size.height
-                    if index == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
+            ZStack {
+                Canvas { context, size in
+                    guard samples.count >= 2, let latest = samples.last?.timestamp else { return }
+                    let ceiling = max(1, details?.graphCeilingBytesPerSecond ?? 1)
+                    var path = Path()
+                    for (index, sample) in samples.enumerated() {
+                        let x = CGFloat((sample.timestamp - (latest - 60)) / 60) * size.width
+                        let normalized = min(sample.combinedBytesPerSecond / ceiling, 1)
+                        let y = (1 - CGFloat(normalized)) * size.height
+                        if index == 0 {
+                            path.move(to: CGPoint(x: x, y: y))
+                        } else {
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
                     }
+                    context.stroke(path, with: .color(color), lineWidth: 2)
                 }
-                context.stroke(path, with: .color(color), lineWidth: 2)
+
+                if utility == .packet {
+                    NetworkPacketView(
+                        samples: samples,
+                        ceiling: details?.graphCeilingBytesPerSecond ?? 1,
+                        color: color,
+                        latestCommand: latestCommand
+                    )
+                }
             }
             .frame(height: 280)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
@@ -589,6 +622,88 @@ private struct NetworkPerformanceView: View {
                 }
             }
         }
+    }
+}
+
+private struct NetworkPacketView: View {
+    let samples: [NetworkThroughputSample]
+    let ceiling: Double
+    let color: Color
+    let latestCommand: SequencedEasterEggCommand?
+
+    @State private var flight = NetworkPacketFlight()
+    @State private var graphSize: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { geometry in
+            TimelineView(.animation(minimumInterval: 1.0 / 60)) { timeline in
+                Canvas { context, size in
+                    let mapping = graphMapping(size: size)
+                    guard let position = flight.position(in: mapping) else { return }
+                    drawPacket(
+                        at: CGPoint(x: position.x, y: size.height - position.y),
+                        context: &context
+                    )
+                }
+                .onAppear {
+                    graphSize = geometry.size
+                    flight.reset(in: graphMapping(size: geometry.size))
+                }
+                .onChange(of: timeline.date) { oldDate, newDate in
+                    graphSize = geometry.size
+                    flight.update(
+                        deltaTime: newDate.timeIntervalSince(oldDate),
+                        mapping: graphMapping(size: geometry.size)
+                    )
+                }
+                .onChange(of: geometry.size) { _, size in
+                    graphSize = size
+                    flight.reset(in: graphMapping(size: size))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .onChange(of: latestCommand) { _, event in
+            guard let event else { return }
+            switch event.command {
+            case .flap:
+                flight.flap()
+            case .reset:
+                flight.reset(in: graphMapping(size: graphSize))
+            case .toggle, .setMovement, .stepLeft, .stepRight,
+                    .setFastDrop, .rotateClockwise:
+                break
+            }
+        }
+    }
+
+    private func graphMapping(size: CGSize) -> NetworkGraphMapping {
+        NetworkGraphMapping(samples: samples, ceiling: ceiling, size: size)
+    }
+
+    private func drawPacket(at position: CGPoint, context: inout GraphicsContext) {
+        let bodyRect = CGRect(x: position.x - 13, y: position.y - 9, width: 26, height: 18)
+        let body = Path(roundedRect: bodyRect, cornerRadius: 3)
+        context.fill(body, with: .color(Color(nsColor: .controlBackgroundColor)))
+        context.stroke(body, with: .color(color), lineWidth: 2)
+
+        var fold = Path()
+        fold.move(to: CGPoint(x: bodyRect.minX + 3, y: bodyRect.minY + 4))
+        fold.addLine(to: position)
+        fold.addLine(to: CGPoint(x: bodyRect.maxX - 3, y: bodyRect.minY + 4))
+        context.stroke(fold, with: .color(color.opacity(0.82)), lineWidth: 1.4)
+
+        var wings = Path()
+        wings.move(to: CGPoint(x: bodyRect.minX + 4, y: position.y))
+        wings.addLine(to: CGPoint(x: bodyRect.minX - 8, y: position.y - 7))
+        wings.addLine(to: CGPoint(x: bodyRect.minX - 4, y: position.y + 5))
+        wings.closeSubpath()
+        wings.move(to: CGPoint(x: bodyRect.maxX - 4, y: position.y))
+        wings.addLine(to: CGPoint(x: bodyRect.maxX + 8, y: position.y - 7))
+        wings.addLine(to: CGPoint(x: bodyRect.maxX + 4, y: position.y + 5))
+        wings.closeSubpath()
+        context.fill(wings, with: .color(color.opacity(0.88)))
+        context.stroke(wings, with: .color(color), lineWidth: 1)
     }
 }
 

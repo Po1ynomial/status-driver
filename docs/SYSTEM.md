@@ -13,6 +13,7 @@
 - GPU appears when current IOKit PerformanceStatistics expose Device Utilization; its detail page shows Device, Renderer, Tiler, in-use system memory, Metal, model, and unified-memory metadata.
 - When the hidden global toggle is enabled, Memory replaces the Car with a small sailboat that follows the immutable usage boundary through damped buoyancy and limited slope pitch.
 - Disk replaces the Car with a seven-piece Tetromino dropper. The active piece moves and rotates in discrete steps, then becomes a free rigid body when it meets terrain, another piece, or `R`.
+- Wi-Fi and non-Thunderbolt Ethernet use a winged Packet in the adaptive Network graph. Space provides one upward impulse; collision attaches it to the struck sample until history carries it offscreen.
 - CPU uses blue and Memory uses violet across sparklines, graph border, terrain, fill, and composition. The interface follows system light or dark appearance.
 - An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU uses wrapping Mach tick deltas. Memory uses Mach VM statistics, `hw.memsize`, and `(internal - purgeable + wired + compressor) / physical pages`.
@@ -44,6 +45,7 @@
 - `Sources/StatusDriverCore/MemoryUsage.swift` defines VM reads, raw and derived Memory details, bounded composition, and the Memory producer.
 - `Sources/StatusDriverCore/GPUPerformance.swift` reads experimental IOKit GPU statistics, clamps/filter values, retries discovery, and exposes GPU details.
 - `Sources/StatusDriverCore/NetworkPerformance.swift` maps physical SystemConfiguration ports, reads route-interface counters and getifaddrs addresses, calculates rates, adaptive scale, connection state, and discovery cadence.
+- `Sources/StatusDriverCore/NetworkPacket.swift` maps adaptive throughput into graph coordinates and defines Packet spawn, gravity, flap, soft ceiling, swept collision, stuck attachment, rescaling, and autorespawn.
 - `Sources/StatusDriverCore/MetricHistoryStore.swift` owns independent rolling histories and selection rules.
 - `Sources/StatusDriverCore/MetricReading.swift` defines metric identity, availability, detail payloads, paired snapshots, source mode, and startup gating.
 - `Sources/StatusDriverCore/MetricStream.swift` defines paired producers, clocks, bounded streaming, concurrent live production, and dual synthetic production.
