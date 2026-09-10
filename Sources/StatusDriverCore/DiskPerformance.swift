@@ -430,7 +430,7 @@ package actor DiskMonitor {
                     kind: .disk,
                     colorRole: .disk,
                     graphKind: .physicalFixed,
-                    easterEggUtility: .car
+                    easterEggUtility: .tetromino
                 )
             },
             readings: readings

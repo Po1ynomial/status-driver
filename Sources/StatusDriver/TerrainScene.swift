@@ -43,6 +43,10 @@ final class TerrainScene: SKScene {
     private var activeEasterEggUtility: EasterEggUtility = .none
     private var vehicle: Vehicle?
     private var boat: Boat?
+    private var activeTetromino: TetrominoPiece?
+    private var settledTetrominos: [TetrominoPiece] = []
+    private var tetrominoBag = TetrominoBag()
+    private var tetrominoDropClock = TetrominoDropClock()
     private var pressedControls: Set<DrivingControl> = []
     private var pressedMovements: Set<EasterEggMovement> = []
     private var latestReadingTimestamp: TimeInterval?
@@ -87,6 +91,7 @@ final class TerrainScene: SKScene {
         ensureUtilityMatchesSelection()
         vehicle?.update(controls: pressedControls)
         updateBoat(deltaTime: deltaTime)
+        updateTetrominos(deltaTime: deltaTime)
         resetUtilityIfOutsideViewport()
     }
 
@@ -144,7 +149,18 @@ final class TerrainScene: SKScene {
             updateMovement(.left, isPressed: isPressed)
         case .reset:
             resetCurrentUtility()
-        case .toggle, .stepLeft, .stepRight, .setFastDrop, .rotateClockwise, .flap:
+        case .stepLeft:
+            moveActiveTetromino(x: -1, y: 0)
+        case .stepRight:
+            moveActiveTetromino(x: 1, y: 0)
+        case let .setFastDrop(isPressed):
+            guard activeEasterEggUtility == .tetromino else { break }
+            tetrominoDropClock.isFastDropping = isPressed
+        case .rotateClockwise:
+            guard activeEasterEggUtility == .tetromino else { break }
+            activeTetromino?.rotateClockwise()
+            settleActiveTetrominoIfNeeded()
+        case .toggle, .flap:
             break
         }
     }
@@ -248,7 +264,9 @@ final class TerrainScene: SKScene {
                 body.friction = 0.92
                 body.restitution = 0.02
                 body.categoryBitMask = PhysicsCategory.terrain
-                body.collisionBitMask = PhysicsCategory.chassis | PhysicsCategory.wheel
+                body.collisionBitMask = PhysicsCategory.chassis
+                    | PhysicsCategory.wheel
+                    | PhysicsCategory.tetromino
                 body.contactTestBitMask = 0
                 collisionNode.physicsBody = body
             } else {
@@ -288,7 +306,9 @@ final class TerrainScene: SKScene {
             ensureVisibleVehicleExists()
         case .boat:
             ensureBoatExists()
-        case .tetromino, .packet, .none:
+        case .tetromino:
+            ensureTetrominoExists()
+        case .packet, .none:
             break
         }
     }
@@ -312,6 +332,11 @@ final class TerrainScene: SKScene {
         vehicle = nil
         boat?.remove()
         boat = nil
+        activeTetromino?.remove()
+        activeTetromino = nil
+        settledTetrominos.forEach { $0.remove() }
+        settledTetrominos.removeAll()
+        tetrominoDropClock.reset()
     }
 
     private func ensureVisibleVehicleExists() {
@@ -325,6 +350,21 @@ final class TerrainScene: SKScene {
               histories.samples(for: selectedResource).count >= 2 else { return }
         let position = boatResetPosition()
         boat = Boat(in: self, at: position)
+    }
+
+    private func ensureTetrominoExists() {
+        guard activeEasterEggUtility == .tetromino, activeTetromino == nil,
+              histories.samples(for: selectedResource).count >= 2 else { return }
+        let position = CGPoint(
+            x: trackingCamera.position.x,
+            y: size.height - TetrominoPiece.blockSize * 2.5
+        )
+        activeTetromino = TetrominoPiece(
+            kind: tetrominoBag.next(),
+            in: self,
+            at: position
+        )
+        tetrominoDropClock.reset()
     }
 
     private func replaceVehicle(at position: CGPoint) {
@@ -353,7 +393,9 @@ final class TerrainScene: SKScene {
             pressedMovements.removeAll()
             pressedControls.removeAll()
             ensureBoatExists()
-        case .tetromino, .packet, .none:
+        case .tetromino:
+            releaseActiveTetromino()
+        case .packet, .none:
             break
         }
     }
@@ -375,19 +417,78 @@ final class TerrainScene: SKScene {
         )
     }
 
+    private func updateTetrominos(deltaTime: TimeInterval) {
+        guard activeEasterEggUtility == .tetromino else { return }
+        ensureTetrominoExists()
+        for _ in 0..<tetrominoDropClock.advance(by: deltaTime) {
+            moveActiveTetromino(x: 0, y: -1)
+        }
+
+        let viewport = graphViewport()
+        settledTetrominos.removeAll { piece in
+            if piece.isFullyOutside(viewport) {
+                piece.remove()
+                return true
+            }
+            return false
+        }
+        if settledTetrominos.count > 96 {
+            let excess = settledTetrominos.count - 96
+            settledTetrominos.prefix(excess).forEach { $0.remove() }
+            settledTetrominos.removeFirst(excess)
+        }
+    }
+
+    private func moveActiveTetromino(x: Int, y: Int) {
+        guard activeEasterEggUtility == .tetromino, let activeTetromino else { return }
+        activeTetromino.move(x: x, y: y)
+        settleActiveTetrominoIfNeeded()
+    }
+
+    private func settleActiveTetrominoIfNeeded() {
+        guard let activeTetromino else { return }
+        let frames = activeTetromino.blockFrames(in: self)
+        let touchesTerrain = frames.contains { frame in
+            let terrainY = terrainHeight(atWorldX: frame.midX, sceneHeight: size.height)
+                ?? configuration.bottomInset
+            return frame.minY <= terrainY
+        }
+        let touchesPiece = settledTetrominos.contains { settled in
+            let settledFrames = settled.blockFrames(in: self)
+            return frames.contains { frame in
+                settledFrames.contains { $0.intersects(frame.insetBy(dx: 1, dy: 1)) }
+            }
+        }
+        if touchesTerrain || touchesPiece {
+            releaseActiveTetromino()
+        }
+    }
+
+    private func releaseActiveTetromino() {
+        guard activeEasterEggUtility == .tetromino, let activeTetromino else { return }
+        activeTetromino.release()
+        settledTetrominos.append(activeTetromino)
+        self.activeTetromino = nil
+        ensureTetrominoExists()
+    }
+
     private func resetUtilityIfOutsideViewport() {
-        let viewport = CGRect(
-            x: trackingCamera.position.x - size.width / 2,
-            y: trackingCamera.position.y - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
+        let viewport = graphViewport()
         if vehicle?.isFullyOutside(viewport) == true {
             resetVehicle()
         }
         if boat?.isFullyOutside(viewport) == true {
             resetCurrentUtility()
         }
+    }
+
+    private func graphViewport() -> CGRect {
+        CGRect(
+            x: trackingCamera.position.x - size.width / 2,
+            y: trackingCamera.position.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
     }
 
     private func vehicleResetPosition() -> CGPoint {

@@ -63,7 +63,7 @@ package actor SyntheticDiskMonitor {
             kind: .disk,
             colorRole: .disk,
             graphKind: .physicalFixed,
-            easterEggUtility: .car
+            easterEggUtility: .tetromino
         )
         return DiskMonitorUpdate(descriptors: [descriptor], readings: [reading])
     }

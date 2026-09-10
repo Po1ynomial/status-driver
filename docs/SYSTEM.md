@@ -12,6 +12,7 @@
 - Each Network detail page uses a current-time adaptive SwiftUI throughput graph with send/receive/combined rates, packet rates, state, BSD interface, addresses, optional link speed, and nonzero errors or drops. Network has no physical terrain.
 - GPU appears when current IOKit PerformanceStatistics expose Device Utilization; its detail page shows Device, Renderer, Tiler, in-use system memory, Metal, model, and unified-memory metadata.
 - When the hidden global toggle is enabled, Memory replaces the Car with a small sailboat that follows the immutable usage boundary through damped buoyancy and limited slope pitch.
+- Disk replaces the Car with a seven-piece Tetromino dropper. The active piece moves and rotates in discrete steps, then becomes a free rigid body when it meets terrain, another piece, or `R`.
 - CPU uses blue and Memory uses violet across sparklines, graph border, terrain, fill, and composition. The interface follows system light or dark appearance.
 - An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU uses wrapping Mach tick deltas. Memory uses Mach VM statistics, `hw.memsize`, and `(internal - purgeable + wired + compressor) / physical pages`.
@@ -34,7 +35,9 @@
 - `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, handles graph keyboard input, and coordinates the vehicle.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriver/Boat.swift` draws the Memory sailboat and applies the shared buoyancy motion model to SpriteKit coordinates.
+- `Sources/StatusDriver/TetrominoPiece.swift` draws controlled tetrominos and converts their four blocks into one compound SpriteKit physics body.
 - `Sources/StatusDriverCore/BoatMotion.swift` defines deterministic damped buoyancy, pitch, horizontal sailing, braking, and reset state.
+- `Sources/StatusDriverCore/Tetromino.swift` defines the seven shapes, rotation, deterministic seven-piece bag, and normal or accelerated descent cadence.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines focus-independent semantic key routing for each easter-egg utility.
 - `Sources/StatusDriverCore/DiskPerformance.swift` discovers IOKit whole disks and calculates service-time Activity, transfer, operation, response, error, scale, and identity data.

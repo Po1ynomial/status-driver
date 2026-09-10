@@ -22,6 +22,8 @@ struct StatusDriverModelTests {
             ("easter egg input routing", { easterEggInputRouting() }),
             ("resource easter egg state", { resourceEasterEggState() }),
             ("boat motion", { boatMotion() }),
+            ("tetromino shapes and bag", { tetrominoShapesAndBag() }),
+            ("tetromino drop clock", { tetrominoDropClock() }),
             ("shared terrain geometry", { sharedTerrainGeometry() }),
             ("CPU utilization", { cpuUtilization() }),
             ("CPU counter rollover", { cpuCounterRollover() }),
@@ -291,6 +293,40 @@ struct StatusDriverModelTests {
 
         motion.reset(at: CGPoint(x: 40, y: 70))
         return motion.state == BoatMotionState(position: CGPoint(x: 40, y: 70))
+    }
+
+    private static func tetrominoShapesAndBag() -> Bool {
+        guard TetrominoKind.allCases.allSatisfy({
+            $0.cells.count == 4 && Set($0.cells).count == 4
+        }) else { return false }
+
+        let original = TetrominoKind.t.cells
+        let rotated = original.map { $0.rotatedClockwise() }
+        let restored = (0..<3).reduce(rotated) { cells, _ in
+            cells.map { $0.rotatedClockwise() }
+        }
+        guard Set(original) == Set(restored) else { return false }
+
+        var first = TetrominoBag(seed: 42)
+        var second = TetrominoBag(seed: 42)
+        let firstBag = (0..<7).map { _ in first.next() }
+        let secondBag = (0..<7).map { _ in second.next() }
+        return firstBag == secondBag && Set(firstBag) == Set(TetrominoKind.allCases)
+    }
+
+    private static func tetrominoDropClock() -> Bool {
+        var clock = TetrominoDropClock()
+        let normal = (0..<31).reduce(0) { count, _ in
+            count + clock.advance(by: 1.0 / 60)
+        }
+        guard normal == 0, clock.advance(by: 1.0 / 60) == 1 else { return false }
+
+        clock.reset()
+        clock.isFastDropping = true
+        let fast = (0..<30).reduce(0) { count, _ in
+            count + clock.advance(by: 1.0 / 60)
+        }
+        return fast >= 6 && clock.isFastDropping
     }
 
     private static func sharedTerrainGeometry() -> Bool {
@@ -868,6 +904,7 @@ struct StatusDriverModelTests {
               let reading = first.readings.first,
               case let .disk(details)? = reading.details else { return false }
         return first.descriptors.first?.kind == .disk
+            && first.descriptors.first?.easterEggUtility == .tetromino
             && reading.availability == .available
             && details.readBytesPerSecond + details.writeBytesPerSecond > 0
             && details.readErrorDelta == 0

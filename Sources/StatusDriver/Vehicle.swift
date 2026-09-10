@@ -7,6 +7,7 @@ enum PhysicsCategory {
     static let terrain: UInt32 = 1 << 0
     static let chassis: UInt32 = 1 << 1
     static let wheel: UInt32 = 1 << 2
+    static let tetromino: UInt32 = 1 << 3
 }
 
 @MainActor
