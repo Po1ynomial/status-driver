@@ -34,7 +34,7 @@ package struct EasterEggInputEvent: Equatable, Sendable {
     }
 }
 
-package enum EasterEggMovement: Equatable, Sendable {
+package enum EasterEggMovement: Hashable, Sendable {
     case left
     case right
 }

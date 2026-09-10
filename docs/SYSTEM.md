@@ -11,6 +11,7 @@
 - Each Disk detail page shows Activity terrain, a current adaptive read/write transfer graph, model, physical capacity, type, root-disk status, response time, byte rates, operation rates, and nonzero errors.
 - Each Network detail page uses a current-time adaptive SwiftUI throughput graph with send/receive/combined rates, packet rates, state, BSD interface, addresses, optional link speed, and nonzero errors or drops. Network has no physical terrain.
 - GPU appears when current IOKit PerformanceStatistics expose Device Utilization; its detail page shows Device, Renderer, Tiler, in-use system memory, Metal, model, and unified-memory metadata.
+- When the hidden global toggle is enabled, Memory replaces the Car with a small sailboat that follows the immutable usage boundary through damped buoyancy and limited slope pitch.
 - CPU uses blue and Memory uses violet across sparklines, graph border, terrain, fill, and composition. The interface follows system light or dark appearance.
 - An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU uses wrapping Mach tick deltas. Memory uses Mach VM statistics, `hw.memsize`, and `(internal - purgeable + wired + compressor) / physical pages`.
@@ -32,6 +33,8 @@
 - `Sources/StatusDriver/TerrainView.swift` defines the Performance split view, sidebar sparklines, selected-resource detail pages, Memory composition, formatters, and SpriteKit bridge.
 - `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, handles graph keyboard input, and coordinates the vehicle.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
+- `Sources/StatusDriver/Boat.swift` draws the Memory sailboat and applies the shared buoyancy motion model to SpriteKit coordinates.
+- `Sources/StatusDriverCore/BoatMotion.swift` defines deterministic damped buoyancy, pitch, horizontal sailing, braking, and reset state.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
 - `Sources/StatusDriverCore/DrivingInput.swift` defines focus-independent semantic key routing for each easter-egg utility.
 - `Sources/StatusDriverCore/DiskPerformance.swift` discovers IOKit whole disks and calculates service-time Activity, transfer, operation, response, error, scale, and identity data.

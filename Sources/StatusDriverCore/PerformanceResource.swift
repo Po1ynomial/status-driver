@@ -85,7 +85,7 @@ package struct PerformanceResourceDescriptor: Identifiable, Equatable, Sendable 
         kind: .memory,
         colorRole: .memory,
         graphKind: .physicalFixed,
-        easterEggUtility: .car
+        easterEggUtility: .boat
     )
 }
 

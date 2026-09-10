@@ -42,8 +42,11 @@ final class TerrainScene: SKScene {
     private var selectedColorRole: PerformanceColorRole = .cpu
     private var activeEasterEggUtility: EasterEggUtility = .none
     private var vehicle: Vehicle?
+    private var boat: Boat?
     private var pressedControls: Set<DrivingControl> = []
+    private var pressedMovements: Set<EasterEggMovement> = []
     private var latestReadingTimestamp: TimeInterval?
+    private var previousUpdateTime: TimeInterval?
     private var isDarkAppearance = false
     private var isConfigured = false
 
@@ -61,7 +64,7 @@ final class TerrainScene: SKScene {
     }
 
     override func willMove(from view: SKView) {
-        pressedControls.removeAll()
+        removeCurrentUtility()
         super.willMove(from: view)
     }
 
@@ -72,18 +75,19 @@ final class TerrainScene: SKScene {
         updateCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
-        if vehicle != nil {
-            resetVehicle()
-        }
+        resetCurrentUtility()
     }
 
     override func update(_ currentTime: TimeInterval) {
         guard isConfigured else { return }
 
+        let deltaTime = previousUpdateTime.map { currentTime - $0 } ?? 0
+        previousUpdateTime = currentTime
         updateCamera()
-        ensureVehicleMatchesUtility()
+        ensureUtilityMatchesSelection()
         vehicle?.update(controls: pressedControls)
-        resetVehicleIfOutsideViewport()
+        updateBoat(deltaTime: deltaTime)
+        resetUtilityIfOutsideViewport()
     }
 
     func ingest(_ reading: MetricReading, historyInput: MetricHistoryInput) {
@@ -119,27 +123,27 @@ final class TerrainScene: SKScene {
         selectedColorRole = colorRole
         applyGraphStyle()
         rebuildTerrain(rebuildCollisions: true)
-        if vehicle != nil {
-            resetVehicle()
-        }
+        removeCurrentUtility()
+        ensureUtilityMatchesSelection()
         view?.window?.makeFirstResponder(view)
         return true
     }
 
     func setEasterEggUtility(_ utility: EasterEggUtility) {
+        guard activeEasterEggUtility != utility else { return }
         activeEasterEggUtility = utility
-        ensureVehicleMatchesUtility()
+        removeCurrentUtility()
+        ensureUtilityMatchesSelection()
     }
 
     func handle(_ command: EasterEggCommand) {
-        guard activeEasterEggUtility == .car else { return }
         switch command {
         case let .setMovement(.right, isPressed):
-            updateControl(.driveRight, isPressed: isPressed)
+            updateMovement(.right, isPressed: isPressed)
         case let .setMovement(.left, isPressed):
-            updateControl(.brakeOrDriveLeft, isPressed: isPressed)
+            updateMovement(.left, isPressed: isPressed)
         case .reset:
-            resetVehicle()
+            resetCurrentUtility()
         case .toggle, .stepLeft, .stepRight, .setFastDrop, .rotateClockwise, .flap:
             break
         }
@@ -278,29 +282,49 @@ final class TerrainScene: SKScene {
         )
     }
 
-    private func ensureVehicleMatchesUtility() {
+    private func ensureUtilityMatchesSelection() {
         switch activeEasterEggUtility {
         case .car:
             ensureVisibleVehicleExists()
-        case .boat, .tetromino, .packet, .none:
-            pressedControls.removeAll()
-            vehicle?.remove(from: self)
-            vehicle = nil
+        case .boat:
+            ensureBoatExists()
+        case .tetromino, .packet, .none:
+            break
         }
     }
 
-    private func updateControl(_ control: DrivingControl, isPressed: Bool) {
+    private func updateMovement(_ movement: EasterEggMovement, isPressed: Bool) {
+        guard activeEasterEggUtility == .car || activeEasterEggUtility == .boat else { return }
+        let control: DrivingControl = movement == .right ? .driveRight : .brakeOrDriveLeft
         if isPressed {
+            pressedMovements.insert(movement)
             pressedControls.insert(control)
         } else {
+            pressedMovements.remove(movement)
             pressedControls.remove(control)
         }
+    }
+
+    private func removeCurrentUtility() {
+        pressedControls.removeAll()
+        pressedMovements.removeAll()
+        vehicle?.remove(from: self)
+        vehicle = nil
+        boat?.remove()
+        boat = nil
     }
 
     private func ensureVisibleVehicleExists() {
         guard activeEasterEggUtility == .car, vehicle == nil,
               histories.samples(for: selectedResource).count >= 2 else { return }
         replaceVehicle(at: vehicleResetPosition())
+    }
+
+    private func ensureBoatExists() {
+        guard activeEasterEggUtility == .boat, boat == nil,
+              histories.samples(for: selectedResource).count >= 2 else { return }
+        let position = boatResetPosition()
+        boat = Boat(in: self, at: position)
     }
 
     private func replaceVehicle(at position: CGPoint) {
@@ -319,16 +343,50 @@ final class TerrainScene: SKScene {
         replaceVehicle(at: vehicleResetPosition())
     }
 
-    private func resetVehicleIfOutsideViewport() {
-        guard let vehicle else { return }
+    private func resetCurrentUtility() {
+        switch activeEasterEggUtility {
+        case .car:
+            resetVehicle()
+        case .boat:
+            boat?.remove()
+            boat = nil
+            pressedMovements.removeAll()
+            pressedControls.removeAll()
+            ensureBoatExists()
+        case .tetromino, .packet, .none:
+            break
+        }
+    }
+
+    private func updateBoat(deltaTime: TimeInterval) {
+        guard activeEasterEggUtility == .boat, let boat else { return }
+        let x = boat.position.x
+        guard let surfaceY = terrainHeight(atWorldX: x, sceneHeight: size.height) else {
+            return
+        }
+        let probe: CGFloat = 4
+        let leftY = terrainHeight(atWorldX: x - probe, sceneHeight: size.height) ?? surfaceY
+        let rightY = terrainHeight(atWorldX: x + probe, sceneHeight: size.height) ?? surfaceY
+        boat.update(
+            deltaTime: deltaTime,
+            targetSurfaceY: surfaceY + Boat.surfaceOffset,
+            surfaceSlope: (rightY - leftY) / (probe * 2),
+            movements: pressedMovements
+        )
+    }
+
+    private func resetUtilityIfOutsideViewport() {
         let viewport = CGRect(
             x: trackingCamera.position.x - size.width / 2,
             y: trackingCamera.position.y - size.height / 2,
             width: size.width,
             height: size.height
         )
-        if vehicle.isFullyOutside(viewport) {
+        if vehicle?.isFullyOutside(viewport) == true {
             resetVehicle()
+        }
+        if boat?.isFullyOutside(viewport) == true {
+            resetCurrentUtility()
         }
     }
 
@@ -337,6 +395,13 @@ final class TerrainScene: SKScene {
         let terrainY = terrainHeight(atWorldX: x, sceneHeight: size.height)
             ?? configuration.bottomInset
         return CGPoint(x: x, y: terrainY + configuration.resetClearance)
+    }
+
+    private func boatResetPosition() -> CGPoint {
+        let x = trackingCamera.position.x
+        let terrainY = terrainHeight(atWorldX: x, sceneHeight: size.height)
+            ?? configuration.bottomInset
+        return CGPoint(x: x, y: terrainY + Boat.surfaceOffset)
     }
 
     private func rebuildGrid() {

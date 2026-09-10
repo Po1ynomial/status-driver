@@ -21,6 +21,7 @@ struct StatusDriverModelTests {
             ("hidden collision extension", { hiddenCollisionExtension() }),
             ("easter egg input routing", { easterEggInputRouting() }),
             ("resource easter egg state", { resourceEasterEggState() }),
+            ("boat motion", { boatMotion() }),
             ("shared terrain geometry", { sharedTerrainGeometry() }),
             ("CPU utilization", { cpuUtilization() }),
             ("CPU counter rollover", { cpuCounterRollover() }),
@@ -258,6 +259,38 @@ struct StatusDriverModelTests {
         return car == .car
             && network == .none
             && state.activeUtility(for: .cpu) == .none
+    }
+
+    private static func boatMotion() -> Bool {
+        var motion = BoatMotionModel(position: CGPoint(x: 100, y: 50))
+        for _ in 0..<120 {
+            motion.update(
+                deltaTime: 1.0 / 60,
+                targetSurfaceY: 80,
+                surfaceSlope: 0.25,
+                movements: [.right]
+            )
+        }
+        let raised = motion.state
+        guard raised.position.y > 79,
+              raised.position.y < 82,
+              raised.position.x > 100,
+              raised.horizontalVelocity > 0,
+              raised.rotation > 0,
+              raised.rotation <= 0.30 else { return false }
+
+        for _ in 0..<30 {
+            motion.update(
+                deltaTime: 1.0 / 60,
+                targetSurfaceY: 80,
+                surfaceSlope: 0,
+                movements: [.left]
+            )
+        }
+        guard motion.state.horizontalVelocity < raised.horizontalVelocity else { return false }
+
+        motion.reset(at: CGPoint(x: 40, y: 70))
+        return motion.state == BoatMotionState(position: CGPoint(x: 40, y: 70))
     }
 
     private static func sharedTerrainGeometry() -> Bool {
