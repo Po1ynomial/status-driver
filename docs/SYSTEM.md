@@ -3,7 +3,7 @@
 ## Implemented capabilities
 
 - `swift run StatusDriver` opens a native macOS Performance split view and collects aggregate CPU and reclaimability-aware memory concurrently.
-- `swift run StatusDriver -- --synthetic` creates independent random CPU and memory channels and marks the sidebar `Synthetic data`.
+- `swift run StatusDriver -- --synthetic` creates deterministic CPU, Memory, Disk 0, Wi-Fi, and GPU sources and marks the sidebar `Synthetic data`.
 - The resizable sidebar contains CPU, Memory, discovered whole physical disks, physical Wi-Fi/Ethernet interfaces, and best-effort GPU with current summaries and 60-second sparklines.
 - Sidebar clicks are the only resource-selection method.
 - The CPU detail page shows chip name, utilization, process and best-effort thread counts, uptime, packages, cores, performance-level topology and caches, logical processors, and virtualization support.
@@ -15,14 +15,14 @@
 - An application-owned asynchronous stream emits paired snapshots every 150 ms independently of SpriteKit rendering.
 - CPU uses wrapping Mach tick deltas. Memory uses Mach VM statistics, `hw.memsize`, and `(internal - purgeable + wired + compressor) / physical pages`.
 - Each metric has independent availability, a time-aware 0.75-second exponential moving average, and a bounded 60-second history.
-- Current values update at 150 ms. Main graphs, sparklines, and collision expose only immutable one-second averages.
+- Current CPU and Memory values update at 150 ms while their graphs expose immutable one-second averages. Disk and GPU graphs commit each filtered one-second reading directly.
 - Launch-time hardware metadata and a separate one-second process/thread/uptime stream do not block terrain telemetry.
 - An unavailable inactive metric cannot be selected. An active metric remains selected and extends flat terrain while unavailable.
 - The main graph maps a 60-second span across its current width with a one-second commit horizon and truthful `61 seconds` and `1 second` labels.
 - Five extra seconds of real history support the left boundary. An undrawn flat collision segment supports the right boundary.
 - Selection preserves viewport time, replaces drawing and collision geometry, restores graph focus, and resets a visible car.
 - The terrain stroke uses butt caps and bevel joins to avoid SpriteKit fragments on long, nearly flat paths.
-- One application-session easter-egg state starts disabled. Undisclosed `C` toggles it globally; current CPU and Memory descriptors both map enabled state to Car.
+- One application-session easter-egg state starts disabled. Undisclosed `C` toggles it globally; CPU, Memory, Disk, and GPU map enabled state to Car while Network maps it to None.
 
 ## Entry points
 
@@ -54,16 +54,16 @@
 
 1. `StatusDriverApp` parses `--synthetic`; all other launches use genuine telemetry.
 2. `TelemetrySession` loads a partial-tolerant hardware profile once.
-3. Concurrent live or dual synthetic producers emit paired CPU and Memory readings every 150 ms.
-4. The session appends one immutable average per completed second, publishes that committed history for sparklines, and sends the same inputs to SpriteKit. Open buckets remain internal.
+3. Concurrent live or dual synthetic producers emit paired CPU and Memory readings every 150 ms. All telemetry producers use one shared clock origin.
+4. The session appends one immutable CPU and Memory average per completed second. Disk and GPU append each filtered one-second reading directly because those inputs are already at chart cadence. The session publishes the same committed histories to sparklines and SpriteKit.
 5. A separate one-second stream publishes process count, best-effort thread count, and uptime.
 6. A Disk monitor walks IOKit once per second, refreshes discovered whole-disk identity every five seconds, and publishes reset-safe Activity and transfer details.
 7. A Network monitor discovers physical ports every five seconds, reads stable interface counters each second, and publishes current-time adaptive throughput details.
 8. A GPU monitor reads experimental IOKit Device/Renderer/Tiler utilization each second and retries missing or failed discovery every five seconds.
 9. Native sidebar selection updates shared application state. Physical resources select SpriteKit terrain; Network selects a nonphysical SwiftUI graph.
 10. The detail page reads the selected resource, hardware profile, raw details, and supporting current-time graph data without delaying terrain updates.
-11. The physical graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second.
-12. Finalized physical points are created offscreen right and never change after entering view. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
+11. The physical graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second but never advances beyond the selected resource's latest committed point.
+12. Finalized physical points are created offscreen right and never change after entering view. Disk and GPU samples no longer wait for a second one-second reading before becoming committed. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
 13. `C` toggles one application-owned session state. CPU, Memory, Disk, and GPU map enabled state to Car; Network maps it to None while preserving the global state.
 14. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
 
@@ -76,6 +76,7 @@
 - Collapse and restore the sidebar with its native title-bar control. Resize the sidebar and window near their provisional bounds.
 - Change system appearance and verify native controls, text, graph, sparklines, composition, and car remain legible.
 - Run `swift run StatusDriver -- --synthetic`; verify the marker and both independent histories.
+- Watch Disk and GPU for several one-second samples; the terrain line and fill must remain attached to the graph's right edge without a blank sawtooth before each update.
 - Confirm no car appears at launch. Focus the graph and press `C` to show or hide it, then inspect `A`/`D`, arrow keys, `R`, selection reset, resize reset, and graph-boundary reset.
 - Verify terrain already in view never changes shape and that a car crossing the right edge remains supported until it resets.
 

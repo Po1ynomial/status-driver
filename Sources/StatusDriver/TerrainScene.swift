@@ -86,8 +86,8 @@ final class TerrainScene: SKScene {
         resetVehicleIfOutsideViewport()
     }
 
-    func ingest(_ reading: MetricReading) {
-        let update = histories.ingestUpdate(reading)
+    func ingest(_ reading: MetricReading, historyInput: MetricHistoryInput) {
+        let update = histories.ingestUpdate(reading, input: historyInput)
         guard update.wasAccepted else { return }
 
         latestReadingTimestamp = max(latestReadingTimestamp ?? reading.timestamp, reading.timestamp)
@@ -276,7 +276,11 @@ final class TerrainScene: SKScene {
 
     private func updateCamera() {
         let timeline = configuration.timeline(width: size.width)
-        let endingTimestamp = (latestReadingTimestamp ?? 0) - configuration.commitDelay
+        let endingTimestamp = timeline.visibleEndTimestamp(
+            sourceTimestamp: latestReadingTimestamp ?? 0,
+            commitDelay: configuration.commitDelay,
+            latestCommittedTimestamp: histories.samples(for: selectedResource).last?.timestamp
+        )
         trackingCamera.position = CGPoint(
             x: timeline.cameraCenterX(endingAt: endingTimestamp),
             y: size.height / 2

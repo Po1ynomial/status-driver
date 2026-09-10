@@ -28,6 +28,16 @@ package struct GraphTimelineLayout: Equatable {
         let right = worldX(for: timestamp)
         return (right - width)...right
     }
+
+    package func visibleEndTimestamp(
+        sourceTimestamp: TimeInterval,
+        commitDelay: TimeInterval,
+        latestCommittedTimestamp: TimeInterval?
+    ) -> TimeInterval {
+        let delayedTimestamp = sourceTimestamp - commitDelay
+        guard let latestCommittedTimestamp else { return delayedTimestamp }
+        return min(delayedTimestamp, latestCommittedTimestamp)
+    }
 }
 
 package struct TerrainLayout: Equatable {

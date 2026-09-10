@@ -30,11 +30,13 @@ The sidebar starts around 220 points wide, resizes provisionally between 190 and
 
 ## Telemetry session
 
-An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the session ends. Missed timer deadlines do not generate backfill readings.
+An application-owned session collects CPU and memory concurrently every 150 ms using a `ContinuousClock` task. All telemetry producers share one clock origin so their timestamps remain comparable. Collection continues while SpriteKit rendering is throttled or occluded and cancels when the session ends. Missed timer deadlines do not generate backfill readings.
 
 Every resource maintains independent calculation, availability, filtering, and history. A read or discovery failure in one resource does not affect another.
 
-Keep 150 ms readings for current values and detail data, but resample graph history into one-second buckets. Each closed bucket appends one immutable point containing the arithmetic mean of its filtered readings. Open-bucket values are never exposed to sparklines, drawing, or collision. Do not generate empty catch-up buckets after suspension or sampling gaps.
+Keep 150 ms CPU and Memory readings for current values and detail data, but resample their graph histories into one-second buckets. Each closed bucket appends one immutable point containing the arithmetic mean of its filtered readings. Open-bucket values are never exposed to sparklines, drawing, or collision.
+
+Disk and GPU readings already arrive as filtered one-second samples. Commit each of those readings directly instead of passing it through another one-second bucket, which would add a full sample of latency. Neither history path generates empty catch-up points after suspension or sampling gaps.
 
 Default launch uses genuine telemetry. Passing `--synthetic` creates the fixed deterministic synthetic resource set and visibly marks the data as synthetic. Runtime failures never change source mode.
 
@@ -54,7 +56,7 @@ Resource descriptors include graph timing class, color role, detail type, availa
 
 The selected graph displays a 60-second span across its current width with a fixed one-second commit horizon. Its left label says `61 seconds`; its right label says `1 second`. Historical terrain has about one immutable point per second. Current percentages still update at 150 ms and are intentionally newer than the committed graph.
 
-Move the viewport with source time minus one second. A bucket therefore finalizes offscreen right before any of its geometry enters view. Keep real history beyond both visible edges when available, then add a hidden flat collision extension after the newest finalized point. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
+Move the viewport with source time minus one second. A CPU or Memory bucket therefore finalizes offscreen right before any of its geometry enters view, while a committed Disk or GPU sample spends one second offscreen before entering. Never move the visible edge past the selected resource's latest committed timestamp. This cap absorbs normal sampling latency without drawing fabricated terrain. Keep real history beyond both visible edges when available, then add a hidden flat collision extension after the newest finalized point. The extension exists only to support the vehicle before boundary reset and is never drawn onscreen.
 
 For physical resources, the selected history produces line, fill, and collision terrain from the same mapped points. CPU uses blue, Memory violet, Disk green, and GPU cyan-blue. The SpriteKit stroke retains butt caps and bevel joins because round tessellation produced detached fragments on long, nearly collinear paths.
 
@@ -164,7 +166,7 @@ Scale changes may redraw nonphysical history. They never alter committed physica
 
 - CPU, Memory, and raw VM fields update every 150 ms.
 - Disk, Network, and GPU sample independently every one second.
-- Physical graph histories commit immutable one-second averages. Network and Disk transfer graphs update through current time.
+- CPU and Memory graph histories commit immutable one-second averages. Disk and GPU commit their already-filtered one-second readings directly. Network and Disk transfer graphs update through current time.
 - Disk and Network discovery runs every five seconds. GPU retries every five seconds only while absent or unavailable.
 - Processes, best-effort threads, and uptime update once per second.
 - Resource hardware metadata loads on discovery and refreshes only when identity changes.
@@ -190,6 +192,6 @@ Selection and graph-geometry changes reset the active car. Automatic offscreen r
 
 ## Inspection and checks
 
-`swift run StatusDriverModelTests` covers telemetry calculations, counter rollover and reset, adaptive hysteresis, discovery reconciliation, interface filtering, stable identity/color, hot-plug rules, independent failure, synthetic coherence, timing classes, easter-egg dispatch, immutable histories, scheduling, cancellation, and live system reads.
+`swift run StatusDriverModelTests` covers telemetry calculations, counter rollover and reset, adaptive hysteresis, discovery reconciliation, interface filtering, stable identity/color, hot-plug rules, independent failure, synthetic coherence, timing classes, committed-sample edge coverage, easter-egg dispatch, immutable histories, scheduling, cancellation, and live system reads.
 
-Manual inspection covers every resource page, colors, scale changes, hot-plug behavior where practical, both appearances, physical terrain, nonphysical Network behavior, global easter-egg persistence, resize behavior, and bounded retention.
+Manual inspection covers every resource page, colors, scale changes, hot-plug behavior where practical, both appearances, physical terrain, Disk/GPU right-edge continuity, nonphysical Network behavior, global easter-egg persistence, resize behavior, and bounded retention.

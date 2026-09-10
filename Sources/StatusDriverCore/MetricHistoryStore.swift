@@ -10,10 +10,17 @@ package enum MetricHistoryUpdate: Equatable, Sendable {
     }
 }
 
+package enum MetricHistoryInput: Equatable, Sendable {
+    case readings
+    case committedSamples
+}
+
 package struct MetricHistoryStore {
     private let retentionDuration: TimeInterval
     private let chartInterval: TimeInterval
-    private var buffers: [PerformanceResourceID: ChartSampleBuffer] = [:]
+    private var inputKinds: [PerformanceResourceID: MetricHistoryInput] = [:]
+    private var chartBuffers: [PerformanceResourceID: ChartSampleBuffer] = [:]
+    private var committedBuffers: [PerformanceResourceID: CommittedSampleBuffer] = [:]
 
     package init(
         sampleInterval: TimeInterval,
@@ -28,26 +35,93 @@ package struct MetricHistoryStore {
     }
 
     @discardableResult
-    package mutating func ingest(_ reading: MetricReading) -> Bool {
-        ingestUpdate(reading).wasAccepted
+    package mutating func ingest(
+        _ reading: MetricReading,
+        input: MetricHistoryInput = .readings
+    ) -> Bool {
+        ingestUpdate(reading, input: input).wasAccepted
     }
 
     @discardableResult
-    package mutating func ingestUpdate(_ reading: MetricReading) -> MetricHistoryUpdate {
-        var buffer = buffers[reading.resource] ?? ChartSampleBuffer()
-        let update = buffer.ingest(
-            reading.sample,
-            chartInterval: chartInterval,
-            retentionDuration: retentionDuration
+    package mutating func ingestUpdate(
+        _ reading: MetricReading,
+        input: MetricHistoryInput = .readings
+    ) -> MetricHistoryUpdate {
+        precondition(
+            inputKinds[reading.resource].map { $0 == input } ?? true,
+            "A resource cannot change history input kind"
         )
+
+        let update: MetricHistoryUpdate
+        switch input {
+        case .readings:
+            var buffer = chartBuffers[reading.resource] ?? ChartSampleBuffer()
+            update = buffer.ingest(
+                reading.sample,
+                chartInterval: chartInterval,
+                retentionDuration: retentionDuration
+            )
+            if update.wasAccepted {
+                chartBuffers[reading.resource] = buffer
+            }
+        case .committedSamples:
+            var buffer = committedBuffers[reading.resource] ?? CommittedSampleBuffer()
+            update = buffer.ingest(
+                reading.sample,
+                chartInterval: chartInterval,
+                retentionDuration: retentionDuration
+            )
+            if update.wasAccepted {
+                committedBuffers[reading.resource] = buffer
+            }
+        }
+
         if update.wasAccepted {
-            buffers[reading.resource] = buffer
+            inputKinds[reading.resource] = input
         }
         return update
     }
 
     package func samples(for resource: PerformanceResourceID) -> [MetricSample] {
-        buffers[resource]?.samples ?? []
+        switch inputKinds[resource] {
+        case .readings:
+            chartBuffers[resource]?.samples ?? []
+        case .committedSamples:
+            committedBuffers[resource]?.samples ?? []
+        case nil:
+            []
+        }
+    }
+}
+
+private struct CommittedSampleBuffer {
+    private var buffer = RollingSampleBuffer()
+
+    var samples: [MetricSample] {
+        buffer.samples
+    }
+
+    mutating func ingest(
+        _ sample: MetricSample,
+        chartInterval: TimeInterval,
+        retentionDuration: TimeInterval
+    ) -> MetricHistoryUpdate {
+        guard buffer.samples.last.map({ sample.timestamp > $0.timestamp }) ?? true else {
+            return .rejected
+        }
+
+        if buffer.samples.isEmpty {
+            buffer.prefill(
+                endingAt: sample.timestamp,
+                value: sample.value,
+                interval: chartInterval,
+                duration: retentionDuration
+            )
+        } else {
+            buffer.append(sample)
+            buffer.prune(before: sample.timestamp - retentionDuration)
+        }
+        return .historyChanged
     }
 }
 

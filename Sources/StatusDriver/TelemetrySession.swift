@@ -51,11 +51,12 @@ final class TelemetrySession: ObservableObject {
         hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
-        async let activityResult: Void = consumeSystemActivity()
-        async let diskResult: Void = consumeDisks(scene: scene)
-        async let networkResult: Void = consumeNetworks()
-        async let gpuResult: Void = consumeGPU(scene: scene)
-        await consumeMetrics(scene: scene)
+        let telemetryClock: any SamplingClock = ContinuousSamplingClock()
+        async let activityResult: Void = consumeSystemActivity(clock: telemetryClock)
+        async let diskResult: Void = consumeDisks(scene: scene, clock: telemetryClock)
+        async let networkResult: Void = consumeNetworks(clock: telemetryClock)
+        async let gpuResult: Void = consumeGPU(scene: scene, clock: telemetryClock)
+        await consumeMetrics(scene: scene, clock: telemetryClock)
         _ = await activityResult
         _ = await diskResult
         _ = await networkResult
@@ -136,7 +137,7 @@ final class TelemetrySession: ObservableObject {
         return true
     }
 
-    private func consumeMetrics(scene: TerrainScene) async {
+    private func consumeMetrics(scene: TerrainScene, clock: any SamplingClock) async {
         let producer: any MetricSnapshotProducer = switch sourceMode {
         case .live:
             ConcurrentMetricSnapshotProducer()
@@ -146,7 +147,7 @@ final class TelemetrySession: ObservableObject {
 
         var cpuStartupGate = MetricStartupGate(sourceMode: sourceMode)
         var memoryStartupGate = MetricStartupGate(sourceMode: sourceMode)
-        for await snapshot in makeMetricStream(producer: producer) {
+        for await snapshot in makeMetricStream(producer: producer, clock: clock) {
             if Task.isCancelled { break }
 
             if let reading = cpuStartupGate.consume(snapshot.cpu) {
@@ -160,15 +161,14 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
-    private func consumeSystemActivity() async {
-        for await activity in makeSystemActivityStream() {
+    private func consumeSystemActivity(clock: any SamplingClock) async {
+        for await activity in makeSystemActivityStream(clock: clock) {
             if Task.isCancelled { break }
             systemActivity = activity
         }
     }
 
-    private func consumeDisks(scene: TerrainScene) async {
-        let clock = ContinuousSamplingClock()
+    private func consumeDisks(scene: TerrainScene, clock: any SamplingClock) async {
         let liveMonitor = DiskMonitor()
         let syntheticMonitor = SyntheticDiskMonitor()
 
@@ -196,8 +196,7 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
-    private func consumeNetworks() async {
-        let clock = ContinuousSamplingClock()
+    private func consumeNetworks(clock: any SamplingClock) async {
         let liveMonitor = NetworkMonitor()
         let syntheticMonitor = SyntheticNetworkMonitor()
 
@@ -231,8 +230,7 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
-    private func consumeGPU(scene: TerrainScene) async {
-        let clock = ContinuousSamplingClock()
+    private func consumeGPU(scene: TerrainScene, clock: any SamplingClock) async {
         let liveMonitor = GPUMonitor()
         let syntheticMonitor = SyntheticGPUMonitor()
 
@@ -327,9 +325,15 @@ final class TelemetrySession: ObservableObject {
     }
 
     private func ingest(_ reading: MetricReading, into scene: TerrainScene) {
-        let update = interfaceHistories.ingestUpdate(reading)
+        let historyInput: MetricHistoryInput = switch reading.resource {
+        case .cpu, .memory:
+            .readings
+        case .disk, .network, .gpu:
+            .committedSamples
+        }
+        let update = interfaceHistories.ingestUpdate(reading, input: historyInput)
         guard update.wasAccepted else { return }
-        scene.ingest(reading)
+        scene.ingest(reading, historyInput: historyInput)
         guard update == .historyChanged else { return }
 
         switch reading.resource {

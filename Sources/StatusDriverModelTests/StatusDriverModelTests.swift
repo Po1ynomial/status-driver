@@ -36,6 +36,8 @@ struct StatusDriverModelTests {
             ("chart bucket averaging", { chartBucketAveraging() }),
             ("chart skips gap backfill", { chartSkipsGapBackfill() }),
             ("chart history density", { chartHistoryDensity() }),
+            ("committed chart samples", { committedChartSamples() }),
+            ("physical graph edge coverage", { physicalGraphEdgeCoverage() }),
             ("independent metric histories", { independentMetricHistories() }),
             ("dual history retention", { dualHistoryRetention() }),
             ("left terrain margin retention", { leftTerrainMarginRetention() }),
@@ -513,6 +515,60 @@ struct StatusDriverModelTests {
 
         let count = histories.samples(for: .cpu).count
         return count >= 60 && count <= 68
+    }
+
+    private static func committedChartSamples() -> Bool {
+        let resource = PerformanceResourceID.gpu(registryID: 9)
+        var committed = MetricHistoryStore(
+            sampleInterval: 0.15,
+            retentionDuration: 65,
+            chartInterval: 1
+        )
+        var readings = MetricHistoryStore(
+            sampleInterval: 0.15,
+            retentionDuration: 65,
+            chartInterval: 1
+        )
+
+        for timestamp in 0...2 {
+            let reading = metricReading(
+                timestamp: Double(timestamp),
+                value: Double(timestamp) / 10,
+                resource: resource
+            )
+            committed.ingest(reading, input: .committedSamples)
+            readings.ingest(reading)
+        }
+
+        return committed.samples(for: resource).suffix(3) == [
+            MetricSample(timestamp: 0, value: 0),
+            MetricSample(timestamp: 1, value: 0.1),
+            MetricSample(timestamp: 2, value: 0.2),
+        ]
+            && readings.samples(for: resource).last?.timestamp == 1
+    }
+
+    private static func physicalGraphEdgeCoverage() -> Bool {
+        let timeline = GraphTimelineLayout(width: 900, visibleDuration: 60)
+        let beforeEndpoint = timeline.visibleEndTimestamp(
+            sourceTimestamp: 2.5,
+            commitDelay: 1,
+            latestCommittedTimestamp: 2
+        )
+        let cappedAtEndpoint = timeline.visibleEndTimestamp(
+            sourceTimestamp: 3.25,
+            commitDelay: 1,
+            latestCommittedTimestamp: 2
+        )
+        let withoutHistory = timeline.visibleEndTimestamp(
+            sourceTimestamp: 3.25,
+            commitDelay: 1,
+            latestCommittedTimestamp: nil
+        )
+
+        return beforeEndpoint == 1.5
+            && cappedAtEndpoint == 2
+            && withoutHistory == 2.25
     }
 
     private static func independentMetricHistories() -> Bool {
