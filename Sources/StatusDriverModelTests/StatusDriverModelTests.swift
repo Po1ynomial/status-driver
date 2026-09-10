@@ -51,6 +51,9 @@ struct StatusDriverModelTests {
             ("physical network filtering", { physicalNetworkFiltering() }),
             ("network discovery cadence", networkDiscoveryCadence),
             ("synthetic network coherence", syntheticNetworkCoherence),
+            ("GPU performance clamping", { gpuPerformanceClamping() }),
+            ("GPU rediscovery cadence", gpuRediscoveryCadence),
+            ("synthetic GPU coherence", syntheticGPUCoherence),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
@@ -62,6 +65,7 @@ struct StatusDriverModelTests {
             ("live Mach memory sample", liveMachMemorySample),
             ("live IOKit disk discovery", liveDiskDiscovery),
             ("live physical network discovery", liveNetworkDiscovery),
+            ("live IOKit GPU reading", liveGPUReading),
             ("live hardware profile", liveHardwareProfile),
             ("live system activity", liveSystemActivity),
         ]
@@ -827,6 +831,50 @@ struct StatusDriverModelTests {
             && reading.availability == .available
     }
 
+    private static func gpuPerformanceClamping() -> Bool {
+        var calculator = GPUPerformanceCalculator()
+        let reading = calculator.reading(
+            from: GPUSnapshot(
+                registryID: 9,
+                model: "GPU",
+                deviceUtilizationPercent: 140,
+                rendererUtilizationPercent: -5,
+                tilerUtilizationPercent: .nan,
+                inUseSystemMemoryBytes: 10
+            ),
+            at: 0
+        )
+        guard case let .gpu(details)? = reading.details else { return false }
+        return reading.value == 1
+            && details.rendererUtilization == 0
+            && details.tilerUtilization == 0
+            && details.inUseSystemMemoryBytes == 10
+    }
+
+    private static func gpuRediscoveryCadence() async -> Bool {
+        let reader = CountingGPUReader()
+        let monitor = GPUMonitor(reader: reader)
+        _ = await monitor.sample(at: 0)
+        _ = await monitor.sample(at: 1)
+        _ = await monitor.sample(at: 5)
+        return await reader.readCount == 2
+    }
+
+    private static func syntheticGPUCoherence() async -> Bool {
+        let firstMonitor = SyntheticGPUMonitor()
+        let secondMonitor = SyntheticGPUMonitor()
+        let first = await firstMonitor.sample(at: 1)
+        let second = await secondMonitor.sample(at: 1)
+        guard first == second,
+              first.descriptor?.graphKind == .physicalFixed,
+              first.descriptor?.easterEggUtility == .car,
+              let reading = first.reading,
+              case let .gpu(details)? = reading.details else { return false }
+        return reading.value == details.deviceUtilization
+            && details.supportsMetal
+            && details.memoryType == "Unified memory"
+    }
+
     private static func sourceSelection() -> Bool {
         MetricSourceMode(arguments: ["StatusDriver"]) == .live
             && MetricSourceMode(arguments: ["StatusDriver", "--synthetic"]) == .synthetic
@@ -1021,6 +1069,13 @@ struct StatusDriverModelTests {
                 && $0.counters.receivedBytes > 0
                 && $0.counters.sentBytes > 0
         }
+    }
+
+    private static func liveGPUReading() async -> Bool {
+        guard let snapshot = await IOKitGPUReader().readGPU() else { return false }
+        return !snapshot.model.isEmpty
+            && snapshot.deviceUtilizationPercent.isFinite
+            && snapshot.deviceUtilizationPercent >= 0
     }
 
     private static func liveHardwareProfile() async -> Bool {
@@ -1250,6 +1305,15 @@ private actor CountingNetworkDiscovery: NetworkDiscovering {
                 )
             )
         }
+    }
+}
+
+private actor CountingGPUReader: GPUReading {
+    private(set) var readCount = 0
+
+    func readGPU() -> GPUSnapshot? {
+        readCount += 1
+        return nil
     }
 }
 

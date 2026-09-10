@@ -9,6 +9,7 @@ package enum MetricReadingDetails: Equatable, Sendable {
     case memory(MemoryDetails)
     case disk(DiskDetails)
     case network(NetworkDetails)
+    case gpu(GPUDetails)
 }
 
 package struct MetricReading: Equatable, Sendable {

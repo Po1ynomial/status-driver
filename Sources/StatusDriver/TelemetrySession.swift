@@ -54,10 +54,12 @@ final class TelemetrySession: ObservableObject {
         async let activityResult: Void = consumeSystemActivity()
         async let diskResult: Void = consumeDisks(scene: scene)
         async let networkResult: Void = consumeNetworks()
+        async let gpuResult: Void = consumeGPU(scene: scene)
         await consumeMetrics(scene: scene)
         _ = await activityResult
         _ = await diskResult
         _ = await networkResult
+        _ = await gpuResult
     }
 
     func reading(for resource: PerformanceResourceID) -> MetricReading? {
@@ -229,6 +231,39 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
+    private func consumeGPU(scene: TerrainScene) async {
+        let clock = ContinuousSamplingClock()
+        let liveMonitor = GPUMonitor()
+        let syntheticMonitor = SyntheticGPUMonitor()
+
+        while !Task.isCancelled {
+            let timestamp = await clock.elapsedTime()
+            let update: GPUMonitorUpdate
+            switch sourceMode {
+            case .live:
+                update = await liveMonitor.sample(at: timestamp)
+            case .synthetic:
+                update = await syntheticMonitor.sample(at: timestamp)
+            }
+            reconcileGPUResource(update.descriptor)
+            if let reading = update.reading {
+                resourceReadings[reading.resource] = reading
+                ingest(reading, into: scene)
+                inventory.setAvailability(
+                    reading.availability == .available ? .available : .unavailable,
+                    for: reading.resource
+                )
+                resources = inventory.records
+            }
+
+            do {
+                try await clock.sleep(for: .seconds(1))
+            } catch {
+                break
+            }
+        }
+    }
+
     private func reconcileDiskResources(_ descriptors: [PerformanceResourceDescriptor]) {
         inventory.reconcile(
             discovered: descriptors,
@@ -251,6 +286,15 @@ final class TelemetrySession: ObservableObject {
                 inventory.setAvailability(.disconnected, for: descriptor.id)
             }
         }
+        resources = inventory.records
+    }
+
+    private func reconcileGPUResource(_ descriptor: PerformanceResourceDescriptor?) {
+        inventory.reconcile(
+            discovered: descriptor.map { [$0] } ?? [],
+            managedKinds: [.gpu],
+            selectedResource: selectedResource
+        )
         resources = inventory.records
     }
 

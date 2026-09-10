@@ -293,7 +293,7 @@ private struct PerformanceDetailView: View {
                 )
                 DiskStatisticsView(details: diskDetails)
             case .gpu:
-                EmptyView()
+                GPUStatisticsView(details: gpuDetails)
             case .network:
                 EmptyView()
             }
@@ -351,7 +351,7 @@ private struct PerformanceDetailView: View {
         case .network:
             networkDetails?.identity.interfaceName ?? "Network"
         case .gpu:
-            "GPU"
+            gpuDetails?.model ?? "GPU"
         }
     }
 
@@ -410,6 +410,52 @@ private struct PerformanceDetailView: View {
     private var networkDetails: NetworkDetails? {
         guard case let .network(details)? = selectedReading?.details else { return nil }
         return details
+    }
+
+    private var gpuDetails: GPUDetails? {
+        guard case let .gpu(details)? = selectedReading?.details else { return nil }
+        return details
+    }
+}
+
+private struct GPUStatisticsView: View {
+    let details: GPUDetails?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 34) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)],
+                alignment: .leading,
+                spacing: 16
+            ) {
+                PrimaryStatistic(
+                    label: "Utilization",
+                    value: percent(details?.deviceUtilization)
+                )
+                PrimaryStatistic(
+                    label: "Renderer",
+                    value: percent(details?.rendererUtilization)
+                )
+                PrimaryStatistic(
+                    label: "Tiler",
+                    value: percent(details?.tilerUtilization)
+                )
+                PrimaryStatistic(
+                    label: "In use system memory",
+                    value: bytes(details?.inUseSystemMemoryBytes)
+                )
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 7) {
+                DetailRow(label: "Model", value: details?.model ?? "-")
+                DetailRow(
+                    label: "Metal",
+                    value: details.map { $0.supportsMetal ? "Supported" : "Not supported" } ?? "-"
+                )
+                DetailRow(label: "Memory type", value: details?.memoryType ?? "-")
+            }
+        }
+        .padding(.top, 4)
     }
 }
 
