@@ -60,6 +60,27 @@ package struct EasterEggInputRoute: Equatable, Sendable {
     }
 }
 
+package func easterEggKey(forKeyCode keyCode: UInt16) -> EasterEggInputKey? {
+    switch keyCode {
+    case 123, 0:
+        .left
+    case 124, 2:
+        .right
+    case 125, 1:
+        .down
+    case 126, 13:
+        .up
+    case 49:
+        .space
+    case 15:
+        .reset
+    case 8:
+        .toggle
+    default:
+        nil
+    }
+}
+
 package func routeEasterEggInput(
     _ event: EasterEggInputEvent,
     utility: EasterEggUtility

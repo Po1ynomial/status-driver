@@ -207,7 +207,19 @@ struct StatusDriverModelTests {
         let repeatReset = EasterEggInputEvent(key: .reset, phase: .pressed, isRepeat: true)
         let pressToggle = EasterEggInputEvent(key: .toggle, phase: .pressed)
 
-        return routeEasterEggInput(pressLeft, utility: .car)
+        return easterEggKey(forKeyCode: 123) == .left
+            && easterEggKey(forKeyCode: 0) == .left
+            && easterEggKey(forKeyCode: 124) == .right
+            && easterEggKey(forKeyCode: 2) == .right
+            && easterEggKey(forKeyCode: 125) == .down
+            && easterEggKey(forKeyCode: 1) == .down
+            && easterEggKey(forKeyCode: 126) == .up
+            && easterEggKey(forKeyCode: 13) == .up
+            && easterEggKey(forKeyCode: 49) == .space
+            && easterEggKey(forKeyCode: 15) == .reset
+            && easterEggKey(forKeyCode: 8) == .toggle
+            && easterEggKey(forKeyCode: 99) == nil
+            && routeEasterEggInput(pressLeft, utility: .car)
             == EasterEggInputRoute(
                 command: .setMovement(.left, isPressed: true),
                 consumesEvent: true
@@ -263,6 +275,7 @@ struct StatusDriverModelTests {
         state.toggle()
         return car == .car
             && network == .none
+            && PerformanceResourceDescriptor.memory.easterEggUtility == .boat
             && state.activeUtility(for: .cpu) == .none
     }
 

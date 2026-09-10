@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a standalone macOS activity monitor whose statistical curves can also become surfaces for hidden resource-specific easter eggs. The monitor is the primary product. The current car is one undisclosed easter-egg utility rather than a game objective.
+Build a standalone macOS activity monitor whose statistical curves can also become surfaces or hazards for hidden resource-specific easter eggs. The monitor is the primary product. Car, Boat, Tetromino, and Packet are undisclosed utilities rather than game objectives.
 
 ## Users
 

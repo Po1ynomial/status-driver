@@ -144,7 +144,9 @@ private struct GlobalEasterEggInputMonitor: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(
                 matching: [.keyDown, .keyUp]
             ) { [weak self] event in
-                guard let self, let key = easterEggKey(for: event.keyCode) else { return event }
+                guard let self, let key = easterEggKey(forKeyCode: event.keyCode) else {
+                    return event
+                }
                 let route = routeEasterEggInput(
                     EasterEggInputEvent(
                         key: key,
@@ -166,27 +168,6 @@ private struct GlobalEasterEggInputMonitor: NSViewRepresentable {
             }
             monitor = nil
         }
-    }
-}
-
-private func easterEggKey(for keyCode: UInt16) -> EasterEggInputKey? {
-    switch keyCode {
-    case 123, 0:
-        .left
-    case 124, 2:
-        .right
-    case 125, 1:
-        .down
-    case 126, 13:
-        .up
-    case 49:
-        .space
-    case 15:
-        .reset
-    case 8:
-        .toggle
-    default:
-        nil
     }
 }
 
@@ -975,7 +956,7 @@ private struct SpriteKitView: NSViewRepresentable {
     let scene: TerrainScene
 
     func makeNSView(context: Context) -> SKView {
-        let view = FocusableSKView(frame: CGRect(x: 0, y: 0, width: 920, height: 320))
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 920, height: 320))
         view.ignoresSiblingOrder = true
         scene.applyAppearance(isDark: colorScheme == .dark)
         view.presentScene(scene)
@@ -987,23 +968,6 @@ private struct SpriteKitView: NSViewRepresentable {
         if view.scene !== scene {
             view.presentScene(scene)
         }
-    }
-}
-
-private final class FocusableSKView: SKView {
-    override var acceptsFirstResponder: Bool { true }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard let window else { return }
-        DispatchQueue.main.async {
-            window.makeFirstResponder(self)
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
     }
 }
 

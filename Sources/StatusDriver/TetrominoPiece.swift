@@ -37,12 +37,22 @@ final class TetrominoPiece {
 
     func blockFrames(in scene: SKScene) -> [CGRect] {
         blocks.map { block in
-            let center = scene.convert(.zero, from: block)
+            let half = Self.blockSize / 2
+            let corners = [
+                CGPoint(x: -half, y: -half),
+                CGPoint(x: half, y: -half),
+                CGPoint(x: half, y: half),
+                CGPoint(x: -half, y: half),
+            ].map { scene.convert($0, from: block) }
+            let xCoordinates = corners.map(\.x)
+            let yCoordinates = corners.map(\.y)
+            let minX = xCoordinates.min() ?? 0
+            let minY = yCoordinates.min() ?? 0
             return CGRect(
-                x: center.x - Self.blockSize / 2,
-                y: center.y - Self.blockSize / 2,
-                width: Self.blockSize,
-                height: Self.blockSize
+                x: minX,
+                y: minY,
+                width: (xCoordinates.max() ?? 0) - minX,
+                height: (yCoordinates.max() ?? 0) - minY
             )
         }
     }

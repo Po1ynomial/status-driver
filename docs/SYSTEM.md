@@ -23,9 +23,9 @@
 - An unavailable inactive metric cannot be selected. An active metric remains selected and extends flat terrain while unavailable.
 - The main graph maps a 60-second span across its current width with a one-second commit horizon and truthful `61 seconds` and `1 second` labels.
 - Five extra seconds of real history support the left boundary. An undrawn flat collision segment supports the right boundary.
-- Selection preserves viewport time, replaces drawing and collision geometry, restores graph focus, and resets a visible car.
+- Selection preserves viewport time, replaces drawing and collision geometry, and clears the departing resource's utility objects before creating the selected resource's utility.
 - The terrain stroke uses butt caps and bevel joins to avoid SpriteKit fragments on long, nearly flat paths.
-- One application-session easter-egg state starts disabled. Undisclosed `C` toggles it globally; CPU, Memory, Disk, and GPU map enabled state to Car while Network maps it to None.
+- One application-session easter-egg state starts disabled. Undisclosed `C` toggles it globally; CPU and GPU map to Car, Memory to Boat, Disk to Tetromino, Wi-Fi and non-Thunderbolt Ethernet to Packet, and Thunderbolt to None.
 
 ## Entry points
 
@@ -33,7 +33,7 @@
 - `Sources/StatusDriver/StatusDriver.swift` selects live or synthetic mode and defines the window.
 - `Sources/StatusDriver/TelemetrySession.swift` loads hardware metadata, consumes fast and one-second streams, publishes sidebar histories and details, and owns selection state.
 - `Sources/StatusDriver/TerrainView.swift` defines the Performance split view, sidebar sparklines, selected-resource detail pages, Memory composition, formatters, and SpriteKit bridge.
-- `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, handles graph keyboard input, and coordinates the vehicle.
+- `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, receives semantic commands, and coordinates Car, Boat, and Tetromino lifecycle.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriver/Boat.swift` draws the Memory sailboat and applies the shared buoyancy motion model to SpriteKit coordinates.
 - `Sources/StatusDriver/TetrominoPiece.swift` draws controlled tetrominos and converts their four blocks into one compound SpriteKit physics body.
@@ -72,20 +72,25 @@
 10. The detail page reads the selected resource, hardware profile, raw details, and supporting current-time graph data without delaying terrain updates.
 11. The physical graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second but never advances beyond the selected resource's latest committed point.
 12. Finalized physical points are created offscreen right and never change after entering view. Disk and GPU samples no longer wait for a second one-second reading before becoming committed. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
-13. A window-level event monitor converts keys into resource-specific semantic commands without depending on the current first responder. `C` toggles one application-owned session state. CPU, Memory, Disk, and GPU currently map enabled state to Car; Network maps it to None while preserving the global state.
-14. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
+13. A window-level event monitor converts keys into resource-specific semantic commands without depending on the current first responder. `C` toggles one application-owned session state and dispatches Car, Boat, Tetromino, Packet, or None from the selected descriptor.
+14. Car and Boat use held horizontal movement. Tetromino uses repeated discrete movement, accelerated drop, and quarter-turn rotation. Packet uses nonrepeating Space impulses against gravity.
+15. Selection, resize, or toggle-off removes transient utility state. Tetromino bodies also leave when fully offscreen and remain capped in number.
 
 ## Inspection
 
 - Run `swift build` to compile every package target.
 - Run `swift run StatusDriverModelTests` to execute terrain, telemetry, detail, hardware, secondary stream, selection, cancellation, and live system checks.
 - Run `swift run StatusDriver`; inspect every resource row and compare values with `top`, `vm_stat`, `ioreg`, `iostat`, `netstat`, and `ifconfig` when useful.
-- Select CPU and Memory by click; verify the detail page, terrain color, collision, and car reset change together. Number keys should not select resources.
+- Select resources by click and verify the detail page, graph color, utility dispatch, and cleanup change together. Number keys should not select resources.
 - Collapse and restore the sidebar with its native title-bar control. Resize the sidebar and window near their provisional bounds.
-- Change system appearance and verify native controls, text, graph, sparklines, composition, and car remain legible.
+- Change system appearance and verify native controls, text, graphs, sparklines, composition, and every utility remain legible.
 - Run `swift run StatusDriver -- --synthetic`; verify the marker and both independent histories.
 - Watch Disk and GPU for several one-second samples; the terrain line and fill must remain attached to the graph's right edge without a blank sawtooth before each update.
-- Confirm no car appears at launch. Focus the graph and press `C` to show or hide it, then inspect `A`/`D`, arrow keys, `R`, selection reset, resize reset, and graph-boundary reset.
+- Confirm no utility appears at launch. Press `C` with the sidebar, graph, and detail values focused; the selected utility must appear without an extra graph click.
+- On CPU and GPU, inspect Car movement with `A`/`D` or arrows and `R`.
+- On Memory, inspect Boat sailing, braking, buoyancy, pitch, `R`, and boundary reset without any change to the Memory curve.
+- On Disk, inspect discrete Tetromino movement, fast drop, quarter-turn rotation, physical conversion, `R` release, pile collision, culling, and complete cleanup after selection or resize.
+- On Wi-Fi and non-Thunderbolt Ethernet, inspect Packet gravity, Space impulse, soft ceiling, spike collision, stuck scrolling, autorespawn, `R`, and adaptive rescaling. Thunderbolt must show no utility.
 - Verify terrain already in view never changes shape and that a car crossing the right edge remains supported until it resets.
 
 ## Limitations

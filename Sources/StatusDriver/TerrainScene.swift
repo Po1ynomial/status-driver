@@ -64,7 +64,6 @@ final class TerrainScene: SKScene {
         configureCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
-        view.window?.makeFirstResponder(view)
     }
 
     override func willMove(from view: SKView) {
@@ -79,7 +78,8 @@ final class TerrainScene: SKScene {
         updateCamera()
         rebuildGrid()
         rebuildTerrain(rebuildCollisions: true)
-        resetCurrentUtility()
+        removeCurrentUtility()
+        ensureUtilityMatchesSelection()
     }
 
     override func update(_ currentTime: TimeInterval) {
@@ -130,7 +130,6 @@ final class TerrainScene: SKScene {
         rebuildTerrain(rebuildCollisions: true)
         removeCurrentUtility()
         ensureUtilityMatchesSelection()
-        view?.window?.makeFirstResponder(view)
         return true
     }
 
@@ -163,10 +162,6 @@ final class TerrainScene: SKScene {
         case .toggle, .flap:
             break
         }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        view?.window?.makeFirstResponder(view)
     }
 
     private func configureTerrainNodes() {
@@ -364,7 +359,9 @@ final class TerrainScene: SKScene {
             in: self,
             at: position
         )
+        let isFastDropping = tetrominoDropClock.isFastDropping
         tetrominoDropClock.reset()
+        tetrominoDropClock.isFastDropping = isFastDropping
     }
 
     private func replaceVehicle(at position: CGPoint) {
@@ -449,9 +446,11 @@ final class TerrainScene: SKScene {
         guard let activeTetromino else { return }
         let frames = activeTetromino.blockFrames(in: self)
         let touchesTerrain = frames.contains { frame in
-            let terrainY = terrainHeight(atWorldX: frame.midX, sceneHeight: size.height)
-                ?? configuration.bottomInset
-            return frame.minY <= terrainY
+            [frame.minX, frame.midX, frame.maxX].contains { x in
+                let terrainY = terrainHeight(atWorldX: x, sceneHeight: size.height)
+                    ?? configuration.bottomInset
+                return frame.minY <= terrainY
+            }
         }
         let touchesPiece = settledTetrominos.contains { settled in
             let settledFrames = settled.blockFrames(in: self)
