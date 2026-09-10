@@ -131,27 +131,18 @@ final class TerrainScene: SKScene {
         ensureVehicleMatchesUtility()
     }
 
-    override func keyDown(with event: NSEvent) {
-        guard let input = drivingInput(forKeyCode: event.keyCode) else { return }
-        switch input {
-        case let .control(control):
-            if vehicle != nil {
-                pressedControls.insert(control)
-            }
-        case .reset where !event.isARepeat:
-            resetVehicle()
-        case .toggleEasterEgg:
-            break
+    func handle(_ command: EasterEggCommand) {
+        guard activeEasterEggUtility == .car else { return }
+        switch command {
+        case let .setMovement(.right, isPressed):
+            updateControl(.driveRight, isPressed: isPressed)
+        case let .setMovement(.left, isPressed):
+            updateControl(.brakeOrDriveLeft, isPressed: isPressed)
         case .reset:
+            resetVehicle()
+        case .toggle, .stepLeft, .stepRight, .setFastDrop, .rotateClockwise, .flap:
             break
         }
-    }
-
-    override func keyUp(with event: NSEvent) {
-        guard case let .control(control) = drivingInput(forKeyCode: event.keyCode) else {
-            return
-        }
-        pressedControls.remove(control)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -291,10 +282,18 @@ final class TerrainScene: SKScene {
         switch activeEasterEggUtility {
         case .car:
             ensureVisibleVehicleExists()
-        case .none:
+        case .boat, .tetromino, .packet, .none:
             pressedControls.removeAll()
             vehicle?.remove(from: self)
             vehicle = nil
+        }
+    }
+
+    private func updateControl(_ control: DrivingControl, isPressed: Bool) {
+        if isPressed {
+            pressedControls.insert(control)
+        } else {
+            pressedControls.remove(control)
         }
     }
 

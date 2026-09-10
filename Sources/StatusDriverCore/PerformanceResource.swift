@@ -37,6 +37,9 @@ package enum PerformanceGraphKind: Equatable, Sendable {
 
 package enum EasterEggUtility: Equatable, Sendable {
     case car
+    case boat
+    case tetromino
+    case packet
     case none
 }
 

@@ -33,7 +33,7 @@
 - `Sources/StatusDriver/TerrainScene.swift` stores terrain histories, switches graph color and geometry, handles graph keyboard input, and coordinates the vehicle.
 - `Sources/StatusDriver/Vehicle.swift` builds the chassis, wheels, joints, motors, and vehicle visuals.
 - `Sources/StatusDriverCore/CPUUsage.swift` defines Mach CPU reads, utilization delta math, smoothing, and the CPU producer.
-- `Sources/StatusDriverCore/DrivingInput.swift` defines driving, reset, and global easter-egg-toggle input.
+- `Sources/StatusDriverCore/DrivingInput.swift` defines focus-independent semantic key routing for each easter-egg utility.
 - `Sources/StatusDriverCore/DiskPerformance.swift` discovers IOKit whole disks and calculates service-time Activity, transfer, operation, response, error, scale, and identity data.
 - `Sources/StatusDriverCore/MemoryUsage.swift` defines VM reads, raw and derived Memory details, bounded composition, and the Memory producer.
 - `Sources/StatusDriverCore/GPUPerformance.swift` reads experimental IOKit GPU statistics, clamps/filter values, retries discovery, and exposes GPU details.
@@ -64,7 +64,7 @@
 10. The detail page reads the selected resource, hardware profile, raw details, and supporting current-time graph data without delaying terrain updates.
 11. The physical graph width determines world scale so one viewport always equals 60 seconds. Its right edge follows source time minus one second but never advances beyond the selected resource's latest committed point.
 12. Finalized physical points are created offscreen right and never change after entering view. Disk and GPU samples no longer wait for a second one-second reading before becoming committed. Collision continues flat for 120 points after the newest committed point, while 65-second retention leaves real terrain left of the viewport.
-13. `C` toggles one application-owned session state. CPU, Memory, Disk, and GPU map enabled state to Car; Network maps it to None while preserving the global state.
+13. A window-level event monitor converts keys into resource-specific semantic commands without depending on the current first responder. `C` toggles one application-owned session state. CPU, Memory, Disk, and GPU currently map enabled state to Car; Network maps it to None while preserving the global state.
 14. Horizontal controls use reduced wheel speed and torque for the slower 60-second graph scale.
 
 ## Inspection

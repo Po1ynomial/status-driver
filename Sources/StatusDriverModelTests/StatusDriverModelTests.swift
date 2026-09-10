@@ -19,7 +19,7 @@ struct StatusDriverModelTests {
             ("terrain interpolation", { terrainInterpolation() }),
             ("60-second graph timeline", { graphTimelineMapping() }),
             ("hidden collision extension", { hiddenCollisionExtension() }),
-            ("driving key map", { drivingKeyMap() }),
+            ("easter egg input routing", { easterEggInputRouting() }),
             ("resource easter egg state", { resourceEasterEggState() }),
             ("shared terrain geometry", { sharedTerrainGeometry() }),
             ("CPU utilization", { cpuUtilization() }),
@@ -188,20 +188,55 @@ struct StatusDriverModelTests {
             && collision.boundingBox.maxY == visible.boundingBox.maxY
     }
 
-    private static func drivingKeyMap() -> Bool {
-        drivingInput(forKeyCode: 124) == .control(.driveRight)
-            && drivingInput(forKeyCode: 2) == .control(.driveRight)
-            && drivingInput(forKeyCode: 123) == .control(.brakeOrDriveLeft)
-            && drivingInput(forKeyCode: 0) == .control(.brakeOrDriveLeft)
-            && drivingInput(forKeyCode: 15) == .reset
-            && drivingInput(forKeyCode: 126) == nil
-            && drivingInput(forKeyCode: 125) == nil
-            && drivingInput(forKeyCode: 13) == nil
-            && drivingInput(forKeyCode: 1) == nil
-            && drivingInput(forKeyCode: 8) == .toggleEasterEgg
-            && drivingInput(forKeyCode: 18) == nil
-            && drivingInput(forKeyCode: 19) == nil
-            && drivingInput(forKeyCode: 99) == nil
+    private static func easterEggInputRouting() -> Bool {
+        let pressLeft = EasterEggInputEvent(key: .left, phase: .pressed)
+        let releaseLeft = EasterEggInputEvent(key: .left, phase: .released)
+        let repeatRight = EasterEggInputEvent(key: .right, phase: .pressed, isRepeat: true)
+        let pressDown = EasterEggInputEvent(key: .down, phase: .pressed)
+        let releaseDown = EasterEggInputEvent(key: .down, phase: .released)
+        let pressUp = EasterEggInputEvent(key: .up, phase: .pressed)
+        let pressSpace = EasterEggInputEvent(key: .space, phase: .pressed)
+        let repeatSpace = EasterEggInputEvent(key: .space, phase: .pressed, isRepeat: true)
+        let pressReset = EasterEggInputEvent(key: .reset, phase: .pressed)
+        let repeatReset = EasterEggInputEvent(key: .reset, phase: .pressed, isRepeat: true)
+        let pressToggle = EasterEggInputEvent(key: .toggle, phase: .pressed)
+
+        return routeEasterEggInput(pressLeft, utility: .car)
+            == EasterEggInputRoute(
+                command: .setMovement(.left, isPressed: true),
+                consumesEvent: true
+            )
+            && routeEasterEggInput(releaseLeft, utility: .boat)
+                == EasterEggInputRoute(
+                    command: .setMovement(.left, isPressed: false),
+                    consumesEvent: true
+                )
+            && routeEasterEggInput(repeatRight, utility: .tetromino)
+                == EasterEggInputRoute(command: .stepRight, consumesEvent: true)
+            && routeEasterEggInput(pressDown, utility: .tetromino)
+                == EasterEggInputRoute(
+                    command: .setFastDrop(isPressed: true),
+                    consumesEvent: true
+                )
+            && routeEasterEggInput(releaseDown, utility: .tetromino)
+                == EasterEggInputRoute(
+                    command: .setFastDrop(isPressed: false),
+                    consumesEvent: true
+                )
+            && routeEasterEggInput(pressUp, utility: .tetromino)
+                == EasterEggInputRoute(command: .rotateClockwise, consumesEvent: true)
+            && routeEasterEggInput(pressSpace, utility: .packet)
+                == EasterEggInputRoute(command: .flap, consumesEvent: true)
+            && routeEasterEggInput(repeatSpace, utility: .packet)
+                == EasterEggInputRoute(command: nil, consumesEvent: true)
+            && routeEasterEggInput(pressReset, utility: .none)
+                == EasterEggInputRoute(command: nil, consumesEvent: false)
+            && routeEasterEggInput(pressReset, utility: .car)
+                == EasterEggInputRoute(command: .reset, consumesEvent: true)
+            && routeEasterEggInput(repeatReset, utility: .car)
+                == EasterEggInputRoute(command: nil, consumesEvent: true)
+            && routeEasterEggInput(pressToggle, utility: .none)
+                == EasterEggInputRoute(command: .toggle, consumesEvent: true)
     }
 
     private static func resourceEasterEggState() -> Bool {

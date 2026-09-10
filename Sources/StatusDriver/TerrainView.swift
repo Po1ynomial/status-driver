@@ -26,8 +26,13 @@ struct TerrainView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 900, minHeight: 600)
         .background {
-            GlobalEasterEggKeyMonitor {
-                telemetry.toggleEasterEgg()
+            GlobalEasterEggInputMonitor(utility: telemetry.activeEasterEggUtility) { command in
+                switch command {
+                case .toggle:
+                    telemetry.toggleEasterEgg()
+                default:
+                    scene.handle(command)
+                }
             }
         }
         .task {
@@ -83,11 +88,12 @@ struct TerrainView: View {
     }
 }
 
-private struct GlobalEasterEggKeyMonitor: NSViewRepresentable {
-    let onToggle: () -> Void
+private struct GlobalEasterEggInputMonitor: NSViewRepresentable {
+    let utility: EasterEggUtility
+    let onCommand: (EasterEggCommand) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onToggle: onToggle)
+        Coordinator(utility: utility, onCommand: onCommand)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -96,7 +102,8 @@ private struct GlobalEasterEggKeyMonitor: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        context.coordinator.onToggle = onToggle
+        context.coordinator.utility = utility
+        context.coordinator.onCommand = onCommand
     }
 
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
@@ -104,19 +111,36 @@ private struct GlobalEasterEggKeyMonitor: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var onToggle: () -> Void
+        var utility: EasterEggUtility
+        var onCommand: (EasterEggCommand) -> Void
         private var monitor: Any?
 
-        init(onToggle: @escaping () -> Void) {
-            self.onToggle = onToggle
+        init(
+            utility: EasterEggUtility,
+            onCommand: @escaping (EasterEggCommand) -> Void
+        ) {
+            self.utility = utility
+            self.onCommand = onCommand
         }
 
         func install() {
             guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard event.keyCode == 8, !event.isARepeat else { return event }
-                self?.onToggle()
-                return nil
+            monitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.keyDown, .keyUp]
+            ) { [weak self] event in
+                guard let self, let key = easterEggKey(for: event.keyCode) else { return event }
+                let route = routeEasterEggInput(
+                    EasterEggInputEvent(
+                        key: key,
+                        phase: event.type == .keyDown ? .pressed : .released,
+                        isRepeat: event.isARepeat
+                    ),
+                    utility: utility
+                )
+                if let command = route.command {
+                    onCommand(command)
+                }
+                return route.consumesEvent ? nil : event
             }
         }
 
@@ -126,6 +150,27 @@ private struct GlobalEasterEggKeyMonitor: NSViewRepresentable {
             }
             monitor = nil
         }
+    }
+}
+
+private func easterEggKey(for keyCode: UInt16) -> EasterEggInputKey? {
+    switch keyCode {
+    case 123, 0:
+        .left
+    case 124, 2:
+        .right
+    case 125, 1:
+        .down
+    case 126, 13:
+        .up
+    case 49:
+        .space
+    case 15:
+        .reset
+    case 8:
+        .toggle
+    default:
+        nil
     }
 }
 
