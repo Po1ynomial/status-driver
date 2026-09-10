@@ -1,6 +1,6 @@
 # 0018 - Dispatch one global easter-egg toggle by resource
 
-- **Status:** Accepted
+- **Status:** Accepted; utility mapping superseded by [0019](0019-terrain-specific-easter-eggs.md)
 - **Date:** 2026-09-09
 - **Supersedes:** Resource-shortcut and selection-local visibility details in [0013](0013-performance-graph-and-car.md)
 

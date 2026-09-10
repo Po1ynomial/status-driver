@@ -1,6 +1,6 @@
 # 0013 - Make the car a hidden graph easter egg
 
-- **Status:** Accepted; easter-egg state and resource shortcuts superseded by [0018](0018-resource-easter-eggs.md) and [0014](0014-dynamic-performance-resources.md)
+- **Status:** Accepted; easter-egg state, input focus, and resource shortcuts superseded by [0018](0018-resource-easter-eggs.md), [0019](0019-terrain-specific-easter-eggs.md), and [0014](0014-dynamic-performance-resources.md)
 - **Date:** 2026-09-08
 
 ## Decision

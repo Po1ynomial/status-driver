@@ -173,22 +173,29 @@ Scale changes may redraw nonphysical history. They never alter committed physica
 
 Slow or failed secondary data never blocks graph sampling and only blanks its own field.
 
-## Vehicle easter egg
+## Terrain-specific easter eggs
 
 The global easter-egg toggle is hidden and disabled on every launch. It persists across resource selection for the application session but is not written to disk. There is no visible help, hint, toolbar item, tooltip, or first-run message.
 
-Pressing `C` toggles the global state from any selected resource. CPU, Memory, Disk, and GPU map enabled state to Car. Network maps enabled state to None in this milestone.
+Pressing `C` toggles the global state from any selected resource. CPU and GPU map enabled state to Car, Memory to Boat, Disk to Tetromino, Wi-Fi and Ethernet to Packet, and Thunderbolt Network to None.
 
-Selecting Network removes a visible car but keeps global state enabled. Selecting a physical resource again recreates the car automatically. Driving and reset input have no effect when the current utility is None or global state is disabled.
+One window-level input router receives key-down, key-up, and repeat events regardless of the current first responder. It converts raw keys into semantic commands for the selected utility and consumes only commands that utility uses. Utility models do not depend on AppKit focus or key codes.
 
-Existing hidden controls remain:
+Car remains the current two-wheel physics vehicle on CPU and GPU. Its controls remain:
 
 - `Right` or `D`: drive right.
 - `Left` or `A`: brake rightward movement, then drive left.
 - `R`: reset.
-- `C`: toggle the car.
 
-Selection and graph-geometry changes reset the active car. Automatic offscreen reset uses the graph rectangle, not the application window. Clicking a physical graph restores keyboard focus after sidebar interaction.
+Memory uses a small Boat on its usage boundary. A damped vertical spring produces bounded bobbing after level changes, and local slope supplies limited pitch. `A`/Left and `D`/Right use the Car movement and braking model. `R` resets above graph center.
+
+Disk uses the seven classic Tetromino shapes and colors. The active piece descends and responds to `A`/Left, `D`/Right, `S`/Down, and `W`/Up in discrete block-sized steps. Up rotates exactly 90 degrees. Contact with terrain or a settled piece converts the active piece to a dynamic rigid body and spawns the next piece. `R` releases it immediately and spawns another. There is no grid, row clearing, score, or loss state.
+
+Wi-Fi and Ethernet use a winged Packet against the adaptive throughput path. It flies at 30 percent graph width, uses gravity, and receives one upward impulse for each Space press. The graph top is a soft ceiling. Spawn height is the higher of 65 percent graph height or one packet-height above the current path. Swept collision catches narrow spikes. A collision attaches the inert packet to the struck sample until history carries it off the left edge, then it respawns. `R` resets it immediately.
+
+Packet drawing, collision, and stuck attachment use the same samples and adaptive scale as the visible Network path. It has no SpriteKit terrain body. Thunderbolt Network has no utility until observed under useful traffic.
+
+Disabling `C`, leaving a resource, or changing graph geometry removes the active utility and all transient bodies. Returning while global state remains enabled starts that resource's utility fresh. Fully offscreen Tetrominos are culled. Car and Boat use graph-boundary reset rather than application-window bounds.
 
 ## Inspection and checks
 

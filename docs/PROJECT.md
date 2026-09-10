@@ -10,28 +10,26 @@ The initial audience is the project's owner. This is a personal, entertaining ma
 
 ## Current milestone
 
-Extend the Task Manager-style Performance interface with physical disks, physical network interfaces, and best-effort GPU telemetry. Preserve honest macOS semantics, stable resource identity, immutable physical terrain, and one global hidden easter-egg toggle.
+Match each hidden easter-egg utility to the characteristic terrain of its resource while preserving the activity monitor as the primary product.
 
 ## In scope
 
-- Immediate and five-second discovery of whole physical disks and physical network interfaces.
-- One-second independent sampling for Disk, Network, and GPU.
-- Disk service-time activity terrain plus current adaptive transfer-rate graph.
-- Adaptive combined-throughput Network graphs with per-interface detail.
-- Best-effort experimental GPU utilization and detail from current IOKit registry properties.
-- Dynamic sidebar rows with stable identity, ordering, colors, failure state, and hot-plug behavior.
-- Deterministic synthetic Disk 0, Wi-Fi, and GPU resources.
-- A session-wide hidden easter-egg toggle with per-resource utility dispatch.
+- Car for CPU and GPU terrain.
+- A damped-buoyancy Boat for Memory terrain.
+- A free-physics Tetromino dropper for Disk terrain.
+- A fixed-horizontal-position Packet flyer for Wi-Fi and Ethernet throughput.
+- No utility for Thunderbolt Network until its graph behavior is observed.
+- One session-wide hidden toggle with resource-specific controls.
+- Window-level semantic input routing independent of view focus.
+- Deterministic lifecycle cleanup, reset, collision, and bounded object retention.
 
 ## Out of scope for the current milestone
 
-- Virtual, loopback, bridge, tunnel, AWDL, and other system-only Network rows.
-- Wi-Fi SSID, signal, channel, or PHY mode and their permission requirements.
-- GPU frequency, temperature, power, fixed memory capacity, or memory graph.
-- Root helpers, `powermetrics`, shell-command parsing, or privileged acquisition.
-- Disk formatted capacity and page-file fields.
-- New easter-egg utilities for Network or other future resources.
-- Number-key resource shortcuts, configurable shortcuts, or visible easter-egg help.
+- Full Tetris rules, grid enforcement, row clearing, scoring, preview, hold, or loss state.
+- Network terrain physics or immutable adaptive graph history.
+- A Thunderbolt Network utility.
+- Persistent easter-egg state, configurable shortcuts, or visible help.
+- New Performance resources or telemetry fields.
 - Process lists, persistence, packaging, signing, or outer application navigation.
 
 ## Constraints
@@ -42,15 +40,18 @@ Extend the Task Manager-style Performance interface with physical disks, physica
 - Resource discovery runs every five seconds without blocking sampling or rendering.
 - Physical CPU, Memory, Disk Activity, and GPU graphs expose immutable one-second terrain from 61 to 1 seconds ago.
 - Adaptive Network and Disk transfer graphs are nonphysical and may redraw current visible history through `0`.
-- Network has no easter-egg utility in this milestone.
 - The global `C` toggle persists across resource selection for the session but starts off on each launch.
+- Utility input works at the application-window level and does not depend on graph focus.
+- Utilities never alter, smooth, decorate, or fabricate the statistical curves they use.
+- Adaptive Network collision and attachment derive from the same current path as the visible graph.
+- Hidden and offscreen physics objects remain bounded.
 - No runtime failure silently changes resource, source mode, graph scale policy, or easter-egg state.
 - The app uses public unprivileged APIs where documented; GPU registry properties are an explicit current-Mac best-effort exception.
 
 ## Success conditions
 
 - Default launch immediately discovers available Disk, physical Network, and GPU resources, then reconciles Disk and Network every five seconds.
-- CPU and Memory behavior remains unchanged except removal of `1` and `2` shortcuts.
+- Existing CPU and GPU Car behavior remains intact.
 - Disk Activity uses clamped read-plus-write service-time deltas over wall time and zero activity remains available.
 - Disk detail shows model, physical capacity, type, root-disk status, activity, response time, read/write speed, and operation rates.
 - A nonphysical Disk transfer graph ends at now, plots read and write separately, and uses stable adaptive scale hysteresis.
@@ -62,15 +63,17 @@ Extend the Task Manager-style Performance interface with physical disks, physica
 - Disk is green, Wi-Fi orange, Ethernet muted brick red, other physical interfaces use stable warm colors, and GPU is cyan-blue.
 - Synthetic mode contains deterministic CPU, Memory, Disk 0, Wi-Fi, and GPU data with coherent details.
 - Sidebar clicks are the only resource-selection method.
-- Global easter-egg state starts disabled, survives resource changes, maps CPU/Memory/Disk/GPU to Car and Network to None, and remains undisclosed.
-- Automated checks cover counter arithmetic, rollover and reset, adaptive scaling, filtering, discovery reconciliation, interface filtering, stable identity and color, hot-plug rules, independent failures, synthetic coherence, graph timing, and easter-egg dispatch.
-- Live checks compare Disk and Network values with system tools and confirm GPU utilization on the target M4.
-- Manual checks cover all resource pages, colors, scale changes, hot-plug behavior where practical, physical terrain, global `C` behavior, graph boundaries, both appearances, and bounded retention.
+- Memory Boat follows the usage boundary with damped buoyancy, limited pitch, rover-style horizontal controls, and deterministic reset.
+- Disk uses seven classic discretely controlled tetrominos that become dynamic on collision or `R`, pile physically, and clear on utility teardown.
+- Wi-Fi and Ethernet use a winged Packet with Space impulse, soft ceiling, terrain-aware spawn, swept collision, stuck-sample scrolling, and immediate `R` reset.
+- Thunderbolt interfaces map enabled state to None.
+- Global easter-egg state starts disabled, survives resource changes, dispatches the accepted utility, and remains undisclosed.
+- Automated checks cover semantic input, utility dispatch and cleanup, buoyancy bounds, tetromino stepping and conversion, packet collision and attachment, adaptive rescaling, and bounded retention.
+- Manual checks cover every utility, controls under different focused views, resource switching, resize cleanup, graph boundaries, both appearances, and synthetic plus useful live terrain.
 
 ## Open questions
 
-- Which resource-specific easter egg should Network use later?
-- Should external removable disks receive the car or a different utility?
+- Which utility, if any, fits Thunderbolt Network traffic after live observation?
 - Which additional resource, if any, belongs after GPU?
 - When, if ever, should the project add packaging and distribution?
 
@@ -94,3 +97,4 @@ Extend the Task Manager-style Performance interface with physical disks, physica
 - [Use adaptive nonphysical throughput for Network](decisions/0016-network-performance.md)
 - [Use best-effort IOKit GPU utilization](decisions/0017-gpu-performance.md)
 - [Dispatch one global easter-egg toggle by resource](decisions/0018-resource-easter-eggs.md)
+- [Match easter eggs to resource terrain](decisions/0019-terrain-specific-easter-eggs.md)
