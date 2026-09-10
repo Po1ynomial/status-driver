@@ -4,8 +4,6 @@ import StatusDriverCore
 
 @MainActor
 final class TerrainScene: SKScene {
-    var onEasterEggToggleRequest: (() -> Void)?
-
     private struct Configuration {
         let sampleInterval: TimeInterval = 0.15
         let visibleDuration: TimeInterval = 60
@@ -142,9 +140,9 @@ final class TerrainScene: SKScene {
             }
         case .reset where !event.isARepeat:
             resetVehicle()
-        case .toggleEasterEgg where !event.isARepeat:
-            onEasterEggToggleRequest?()
-        case .reset, .toggleEasterEgg:
+        case .toggleEasterEgg:
+            break
+        case .reset:
             break
         }
     }

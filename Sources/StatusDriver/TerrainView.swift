@@ -25,11 +25,12 @@ struct TerrainView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 900, minHeight: 600)
-        .task {
-            scene.onEasterEggToggleRequest = { [weak telemetry] in
-                telemetry?.toggleEasterEgg()
+        .background {
+            GlobalEasterEggKeyMonitor {
+                telemetry.toggleEasterEgg()
             }
-            defer { scene.onEasterEggToggleRequest = nil }
+        }
+        .task {
             await telemetry.run(scene: scene)
         }
         .onChange(of: telemetry.selectedResource, initial: true) { _, resource in
@@ -53,6 +54,7 @@ struct TerrainView: View {
                         descriptor: record.descriptor,
                         reading: telemetry.reading(for: record.id),
                         history: telemetry.history(for: record.id),
+                        networkHistory: telemetry.networkThroughputHistories[record.id] ?? [],
                         installedMemoryBytes: telemetry.hardwareProfile?.installedMemoryBytes
                     )
                     .tag(record.id)
@@ -81,15 +83,62 @@ struct TerrainView: View {
     }
 }
 
+private struct GlobalEasterEggKeyMonitor: NSViewRepresentable {
+    let onToggle: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onToggle: onToggle)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.install()
+        return NSView(frame: .zero)
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.onToggle = onToggle
+    }
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    final class Coordinator {
+        var onToggle: () -> Void
+        private var monitor: Any?
+
+        init(onToggle: @escaping () -> Void) {
+            self.onToggle = onToggle
+        }
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.keyCode == 8, !event.isARepeat else { return event }
+                self?.onToggle()
+                return nil
+            }
+        }
+
+        func uninstall() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
+        }
+    }
+}
+
 private struct ResourceRow: View {
     let descriptor: PerformanceResourceDescriptor
     let reading: MetricReading?
     let history: [MetricSample]
+    let networkHistory: [NetworkThroughputSample]
     let installedMemoryBytes: UInt64?
 
     var body: some View {
         HStack(spacing: 12) {
-            MetricSparkline(history: history, color: descriptor.colorRole.tint)
+            MetricSparkline(history: sparklineHistory, color: descriptor.colorRole.tint)
                 .frame(width: 68, height: 46)
                 .overlay {
                     Rectangle()
@@ -116,6 +165,11 @@ private struct ResourceRow: View {
         }
         let percentage = Int((reading.value * 100).rounded())
 
+        if descriptor.kind == .network,
+           case let .network(details)? = reading.details {
+            return "S: \(bytesPerSecond(details.sendBytesPerSecond))  "
+                + "R: \(bytesPerSecond(details.receiveBytesPerSecond))"
+        }
         if descriptor.kind == .disk {
             return "\(percentage)%"
         }
@@ -124,6 +178,20 @@ private struct ResourceRow: View {
         }
         let usedBytes = UInt64(Double(installedMemoryBytes) * reading.value)
         return "\(formatMemoryRatio(used: usedBytes, total: installedMemoryBytes)) (\(percentage)%)"
+    }
+
+    private var sparklineHistory: [MetricSample] {
+        guard descriptor.kind == .network,
+              case let .network(details)? = reading?.details else {
+            return history
+        }
+        let ceiling = max(1, details.graphCeilingBytesPerSecond)
+        return networkHistory.map {
+            MetricSample(
+                timestamp: $0.timestamp,
+                value: $0.combinedBytesPerSecond / ceiling
+            )
+        }
     }
 }
 
@@ -183,63 +251,81 @@ private struct PerformanceDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 detailHeader
-                Text(graphLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 3) {
-                    SpriteKitView(scene: scene)
-                        .frame(height: 280)
-                        .overlay(alignment: .topTrailing) {
-                            Text(verticalMaximum)
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .padding(5)
-                        }
-                        .overlay {
-                            Rectangle()
-                                .stroke(selectedColor.opacity(0.72), lineWidth: 1)
-                        }
-
-                    HStack {
-                        Text("61 seconds")
-                        Spacer()
-                        Text("1 second")
-                    }
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
-
-                if selectedDescriptor.kind == .memory {
-                    MemoryCompositionView(details: memoryDetails)
-                }
-
-                switch selectedDescriptor.kind {
-                case .cpu:
-                    CPUStatisticsView(
-                        reading: telemetry.latestCPUReading,
-                        profile: telemetry.hardwareProfile,
-                        activity: telemetry.systemActivity
-                    )
-                case .memory:
-                    MemoryStatisticsView(
-                        reading: telemetry.latestMemoryReading,
-                        profile: telemetry.hardwareProfile
-                    )
-                case .disk:
-                    DiskTransferView(
-                        samples: telemetry.diskTransferHistories[telemetry.selectedResource] ?? [],
-                        details: diskDetails
-                    )
-                    DiskStatisticsView(details: diskDetails)
-                case .network, .gpu:
-                    EmptyView()
-                }
+                graphAndStatistics
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var graphAndStatistics: some View {
+        if selectedDescriptor.kind == .network {
+            NetworkPerformanceView(
+                samples: telemetry.networkThroughputHistories[telemetry.selectedResource] ?? [],
+                details: networkDetails,
+                color: selectedColor
+            )
+        } else {
+            physicalGraph
+
+            if selectedDescriptor.kind == .memory {
+                MemoryCompositionView(details: memoryDetails)
+            }
+
+            switch selectedDescriptor.kind {
+            case .cpu:
+                CPUStatisticsView(
+                    reading: telemetry.latestCPUReading,
+                    profile: telemetry.hardwareProfile,
+                    activity: telemetry.systemActivity
+                )
+            case .memory:
+                MemoryStatisticsView(
+                    reading: telemetry.latestMemoryReading,
+                    profile: telemetry.hardwareProfile
+                )
+            case .disk:
+                DiskTransferView(
+                    samples: telemetry.diskTransferHistories[telemetry.selectedResource] ?? [],
+                    details: diskDetails
+                )
+                DiskStatisticsView(details: diskDetails)
+            case .gpu:
+                EmptyView()
+            case .network:
+                EmptyView()
+            }
+        }
+    }
+
+    private var physicalGraph: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(graphLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            SpriteKitView(scene: scene)
+                .frame(height: 280)
+                .overlay(alignment: .topTrailing) {
+                    Text(verticalMaximum)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(5)
+                }
+                .overlay {
+                    Rectangle().stroke(selectedColor.opacity(0.72), lineWidth: 1)
+                }
+
+            HStack {
+                Text("61 seconds")
+                Spacer()
+                Text("1 second")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
     }
 
     private var detailHeader: some View {
@@ -263,7 +349,7 @@ private struct PerformanceDetailView: View {
         case .disk:
             diskDetails?.identity.model ?? "Disk"
         case .network:
-            "Network"
+            networkDetails?.identity.interfaceName ?? "Network"
         case .gpu:
             "GPU"
         }
@@ -319,6 +405,99 @@ private struct PerformanceDetailView: View {
 
     private var selectedReading: MetricReading? {
         telemetry.reading(for: telemetry.selectedResource)
+    }
+
+    private var networkDetails: NetworkDetails? {
+        guard case let .network(details)? = selectedReading?.details else { return nil }
+        return details
+    }
+}
+
+private struct NetworkPerformanceView: View {
+    let samples: [NetworkThroughputSample]
+    let details: NetworkDetails?
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Throughput")
+                Spacer()
+                Text(bytesPerSecond(details?.graphCeilingBytesPerSecond))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Canvas { context, size in
+                guard samples.count >= 2, let latest = samples.last?.timestamp else { return }
+                let ceiling = max(1, details?.graphCeilingBytesPerSecond ?? 1)
+                var path = Path()
+                for (index, sample) in samples.enumerated() {
+                    let x = CGFloat((sample.timestamp - (latest - 60)) / 60) * size.width
+                    let normalized = min(sample.combinedBytesPerSecond / ceiling, 1)
+                    let y = (1 - CGFloat(normalized)) * size.height
+                    if index == 0 {
+                        path.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+                context.stroke(path, with: .color(color), lineWidth: 2)
+            }
+            .frame(height: 280)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+            .overlay { Rectangle().stroke(color.opacity(0.72), lineWidth: 1) }
+
+            HStack {
+                Text("60 seconds")
+                Spacer()
+                Text("0")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)],
+                alignment: .leading,
+                spacing: 16
+            ) {
+                PrimaryStatistic(label: "Send", value: bytesPerSecond(details?.sendBytesPerSecond))
+                PrimaryStatistic(label: "Receive", value: bytesPerSecond(details?.receiveBytesPerSecond))
+                PrimaryStatistic(label: "Combined", value: bytesPerSecond(details?.combinedBytesPerSecond))
+                PrimaryStatistic(label: "Send packets", value: rate(details?.sendPacketsPerSecond))
+                PrimaryStatistic(label: "Receive packets", value: rate(details?.receivePacketsPerSecond))
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                DetailRow(label: "Adapter", value: details?.identity.portName ?? "-")
+                DetailRow(label: "Interface", value: details?.identity.interfaceName ?? "-")
+                DetailRow(
+                    label: "State",
+                    value: details.map { $0.isConnected ? "Connected" : "Disconnected" } ?? "-"
+                )
+                DetailRow(
+                    label: "Link speed",
+                    value: bitsPerSecond(details?.linkSpeedBitsPerSecond)
+                )
+                DetailRow(
+                    label: "IPv4 address",
+                    value: details?.ipv4Addresses.joined(separator: ", ") ?? "-"
+                )
+                DetailRow(
+                    label: "IPv6 address",
+                    value: details?.ipv6Addresses.joined(separator: ", ") ?? "-"
+                )
+                if let details,
+                   details.inputErrorDelta + details.outputErrorDelta + details.inputDropDelta > 0 {
+                    DetailRow(
+                        label: "Errors / drops",
+                        value: "I \(details.inputErrorDelta), O \(details.outputErrorDelta), "
+                            + "D \(details.inputDropDelta)"
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -660,6 +839,11 @@ private func percent(_ value: Double?) -> String {
 private func bytesPerSecond(_ value: Double?) -> String {
     guard let value else { return "-" }
     return "\(formatBytes(UInt64(max(0, value))))/s"
+}
+
+private func bitsPerSecond(_ value: UInt64?) -> String {
+    guard let value else { return "-" }
+    return "\(formatBytes(value / 8))/s"
 }
 
 private func milliseconds(_ value: Double?) -> String {

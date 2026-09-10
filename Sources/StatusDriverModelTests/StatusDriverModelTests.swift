@@ -2,6 +2,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 import StatusDriverCore
+import SystemConfiguration
 
 @main
 struct StatusDriverModelTests {
@@ -45,6 +46,11 @@ struct StatusDriverModelTests {
             ("disk performance calculation", { diskPerformanceCalculation() }),
             ("disk counter reset", { diskCounterReset() }),
             ("synthetic disk coherence", syntheticDiskCoherence),
+            ("network performance calculation", { networkPerformanceCalculation() }),
+            ("network counter reset", { networkCounterReset() }),
+            ("physical network filtering", { physicalNetworkFiltering() }),
+            ("network discovery cadence", networkDiscoveryCadence),
+            ("synthetic network coherence", syntheticNetworkCoherence),
             ("source selection", { sourceSelection() }),
             ("startup reading gate", { startupReadingGate() }),
             ("stream skips deadline backfill", streamSkipsDeadlineBackfill),
@@ -55,6 +61,7 @@ struct StatusDriverModelTests {
             ("live Mach CPU sample", liveMachCPUSample),
             ("live Mach memory sample", liveMachMemorySample),
             ("live IOKit disk discovery", liveDiskDiscovery),
+            ("live physical network discovery", liveNetworkDiscovery),
             ("live hardware profile", liveHardwareProfile),
             ("live system activity", liveSystemActivity),
         ]
@@ -739,6 +746,87 @@ struct StatusDriverModelTests {
             && details.writeErrorDelta == 0
     }
 
+    private static func networkPerformanceCalculation() -> Bool {
+        let identity = testNetworkIdentity()
+        var calculator = NetworkPerformanceCalculator()
+        let first = NetworkDeviceSnapshot(
+            identity: identity,
+            counters: networkCounters(received: 1_000, sent: 2_000, connected: true)
+        )
+        let second = NetworkDeviceSnapshot(
+            identity: identity,
+            counters: networkCounters(
+                received: 201_000,
+                sent: 102_000,
+                connected: true,
+                receivedPackets: 210,
+                sentPackets: 120
+            )
+        )
+        guard calculator.consume(first, at: 0) == nil,
+              let reading = calculator.consume(second, at: 1),
+              case let .network(details)? = reading.details else { return false }
+        return reading.resource == identity.resourceID
+            && reading.availability == .available
+            && details.receiveBytesPerSecond == 200_000
+            && details.sendBytesPerSecond == 100_000
+            && details.combinedBytesPerSecond == 300_000
+            && details.receivePacketsPerSecond == 200
+            && details.sendPacketsPerSecond == 100
+            && reading.value == 0.3
+    }
+
+    private static func networkCounterReset() -> Bool {
+        let identity = testNetworkIdentity()
+        var calculator = NetworkPerformanceCalculator()
+        _ = calculator.consume(
+            NetworkDeviceSnapshot(
+                identity: identity,
+                counters: networkCounters(received: 100, sent: 100, connected: true)
+            ),
+            at: 0
+        )
+        return calculator.consume(
+            NetworkDeviceSnapshot(
+                identity: identity,
+                counters: networkCounters(received: 1, sent: 1, connected: true)
+            ),
+            at: 1
+        ) == nil
+    }
+
+    private static func physicalNetworkFiltering() -> Bool {
+        physicalNetworkKind(interfaceType: kSCNetworkInterfaceTypeIEEE80211 as String) == .wifi
+            && physicalNetworkKind(interfaceType: kSCNetworkInterfaceTypeEthernet as String)
+                == .ethernet
+            && physicalNetworkKind(interfaceType: "Bridge") == nil
+    }
+
+    private static func networkDiscoveryCadence() async -> Bool {
+        let discovery = CountingNetworkDiscovery(identity: testNetworkIdentity())
+        let monitor = NetworkMonitor(discovery: discovery)
+        _ = await monitor.sample(at: 0)
+        _ = await monitor.sample(at: 1)
+        _ = await monitor.sample(at: 5.1)
+        let counts = await discovery.counts
+        return counts.identityReads == 2 && counts.snapshotReads == 3
+    }
+
+    private static func syntheticNetworkCoherence() async -> Bool {
+        let firstMonitor = SyntheticNetworkMonitor()
+        let secondMonitor = SyntheticNetworkMonitor()
+        let first = await firstMonitor.sample(at: 1)
+        let second = await secondMonitor.sample(at: 1)
+        guard first == second,
+              let reading = first.readings.first,
+              case let .network(details)? = reading.details else { return false }
+        return first.descriptors.first?.graphKind == .adaptiveNonphysical
+            && first.descriptors.first?.easterEggUtility == EasterEggUtility.none
+            && details.combinedBytesPerSecond
+                == details.receiveBytesPerSecond + details.sendBytesPerSecond
+            && reading.availability == .available
+    }
+
     private static func sourceSelection() -> Bool {
         MetricSourceMode(arguments: ["StatusDriver"]) == .live
             && MetricSourceMode(arguments: ["StatusDriver", "--synthetic"]) == .synthetic
@@ -921,6 +1009,20 @@ struct StatusDriverModelTests {
         }
     }
 
+    private static func liveNetworkDiscovery() async -> Bool {
+        let discovery = SystemNetworkDiscovery()
+        let identities = await discovery.discoverIdentities()
+        guard identities.contains(where: { $0.interfaceName == "en0" && $0.kind == .wifi }) else {
+            return false
+        }
+        let snapshots = await discovery.readSnapshots(for: identities)
+        return snapshots.contains {
+            $0.identity.interfaceName == "en0"
+                && $0.counters.receivedBytes > 0
+                && $0.counters.sentBytes > 0
+        }
+    }
+
     private static func liveHardwareProfile() async -> Bool {
         let profile = await SystemHardwareProfileReader().readProfile()
         return !(profile.cpuName ?? "").isEmpty
@@ -992,6 +1094,32 @@ struct StatusDriverModelTests {
             writeTimeNanoseconds: writeTime,
             readErrors: 0,
             writeErrors: 0
+        )
+    }
+
+    private static func testNetworkIdentity() -> NetworkIdentity {
+        NetworkIdentity(interfaceName: "en0", portName: "Wi-Fi", kind: .wifi)
+    }
+
+    private static func networkCounters(
+        received: UInt64,
+        sent: UInt64,
+        connected: Bool,
+        receivedPackets: UInt64 = 10,
+        sentPackets: UInt64 = 20
+    ) -> NetworkCounters {
+        NetworkCounters(
+            receivedBytes: received,
+            sentBytes: sent,
+            receivedPackets: receivedPackets,
+            sentPackets: sentPackets,
+            inputErrors: 0,
+            outputErrors: 0,
+            inputDrops: 0,
+            linkSpeedBitsPerSecond: nil,
+            isConnected: connected,
+            ipv4Addresses: ["192.0.2.1"],
+            ipv6Addresses: []
         )
     }
 
@@ -1075,6 +1203,53 @@ private struct FixedSystemActivityReader: SystemActivityReading {
             threadCount: nil,
             uptime: 12
         )
+    }
+}
+
+private actor CountingNetworkDiscovery: NetworkDiscovering {
+    struct Counts: Sendable {
+        let identityReads: Int
+        let snapshotReads: Int
+    }
+
+    private let identity: NetworkIdentity
+    private var identityReadCount = 0
+    private var snapshotReadCount = 0
+
+    var counts: Counts {
+        Counts(identityReads: identityReadCount, snapshotReads: snapshotReadCount)
+    }
+
+    init(identity: NetworkIdentity) {
+        self.identity = identity
+    }
+
+    func discoverIdentities() -> [NetworkIdentity] {
+        identityReadCount += 1
+        return [identity]
+    }
+
+    func readSnapshots(for identities: [NetworkIdentity]) -> [NetworkDeviceSnapshot] {
+        snapshotReadCount += 1
+        let value = UInt64(snapshotReadCount * 1_000)
+        return identities.map {
+            NetworkDeviceSnapshot(
+                identity: $0,
+                counters: NetworkCounters(
+                    receivedBytes: value,
+                    sentBytes: value,
+                    receivedPackets: value,
+                    sentPackets: value,
+                    inputErrors: 0,
+                    outputErrors: 0,
+                    inputDrops: 0,
+                    linkSpeedBitsPerSecond: nil,
+                    isConnected: true,
+                    ipv4Addresses: [],
+                    ipv6Addresses: []
+                )
+            )
+        }
     }
 }
 

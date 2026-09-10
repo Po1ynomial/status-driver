@@ -19,6 +19,8 @@ final class TelemetrySession: ObservableObject {
     @Published private(set) var resourceHistories: [PerformanceResourceID: [MetricSample]] = [:]
     @Published private(set) var diskTransferHistories:
         [PerformanceResourceID: [DiskTransferSample]] = [:]
+    @Published private(set) var networkThroughputHistories:
+        [PerformanceResourceID: [NetworkThroughputSample]] = [:]
 
     let sourceMode: MetricSourceMode
     private var selection = MetricSelectionState()
@@ -44,15 +46,18 @@ final class TelemetrySession: ObservableObject {
         resourceReadings = [:]
         resourceHistories = [:]
         diskTransferHistories = [:]
+        networkThroughputHistories = [:]
         interfaceHistories = MetricHistoryStore(sampleInterval: 0.15, retentionDuration: 65)
         hardwareProfile = await SystemHardwareProfileReader().readProfile()
         defer { isRunning = false }
 
         async let activityResult: Void = consumeSystemActivity()
         async let diskResult: Void = consumeDisks(scene: scene)
+        async let networkResult: Void = consumeNetworks()
         await consumeMetrics(scene: scene)
         _ = await activityResult
         _ = await diskResult
+        _ = await networkResult
     }
 
     func reading(for resource: PerformanceResourceID) -> MetricReading? {
@@ -108,14 +113,17 @@ final class TelemetrySession: ObservableObject {
     @discardableResult
     func select(_ resource: PerformanceResourceID) -> Bool {
         let availability = reading(for: resource)?.availability ?? .unavailable
-        let hasHistory = switch resource {
-        case .cpu:
-            cpuHistory.count >= 2
-        case .memory:
-            memoryHistory.count >= 2
-        case .disk, .network, .gpu:
-            (resourceHistories[resource]?.count ?? 0) >= 2
-        }
+        let descriptor = descriptor(for: resource)
+        let hasHistory = descriptor?.graphKind == .adaptiveNonphysical || {
+            switch resource {
+            case .cpu:
+                cpuHistory.count >= 2
+            case .memory:
+                memoryHistory.count >= 2
+            case .disk, .network, .gpu:
+                (resourceHistories[resource]?.count ?? 0) >= 2
+            }
+        }()
         var candidate = selection
         guard hasHistory, candidate.select(resource, availability: availability) else {
             return false
@@ -186,12 +194,63 @@ final class TelemetrySession: ObservableObject {
         }
     }
 
+    private func consumeNetworks() async {
+        let clock = ContinuousSamplingClock()
+        let liveMonitor = NetworkMonitor()
+        let syntheticMonitor = SyntheticNetworkMonitor()
+
+        while !Task.isCancelled {
+            let timestamp = await clock.elapsedTime()
+            let update: NetworkMonitorUpdate
+            switch sourceMode {
+            case .live:
+                update = await liveMonitor.sample(at: timestamp)
+            case .synthetic:
+                update = await syntheticMonitor.sample(at: timestamp)
+            }
+            reconcileNetworkResources(update.descriptors)
+            for reading in update.readings {
+                resourceReadings[reading.resource] = reading
+                if case let .network(details)? = reading.details {
+                    inventory.setAvailability(
+                        details.isConnected ? .available : .disconnected,
+                        for: reading.resource
+                    )
+                }
+                appendNetworkThroughput(reading)
+            }
+            resources = inventory.records
+
+            do {
+                try await clock.sleep(for: .seconds(1))
+            } catch {
+                break
+            }
+        }
+    }
+
     private func reconcileDiskResources(_ descriptors: [PerformanceResourceDescriptor]) {
         inventory.reconcile(
             discovered: descriptors,
             managedKinds: [.disk],
             selectedResource: selectedResource
         )
+        resources = inventory.records
+    }
+
+    private func reconcileNetworkResources(_ descriptors: [PerformanceResourceDescriptor]) {
+        inventory.reconcile(
+            discovered: descriptors,
+            managedKinds: [.network],
+            selectedResource: selectedResource
+        )
+        for descriptor in descriptors {
+            if let reading = resourceReadings[descriptor.id],
+               case let .network(details)? = reading.details,
+               !details.isConnected {
+                inventory.setAvailability(.disconnected, for: descriptor.id)
+            }
+        }
         resources = inventory.records
     }
 
@@ -207,6 +266,20 @@ final class TelemetrySession: ObservableObject {
         )
         samples.removeAll { $0.timestamp < reading.timestamp - 60 }
         diskTransferHistories[reading.resource] = samples
+    }
+
+    private func appendNetworkThroughput(_ reading: MetricReading) {
+        guard case let .network(details)? = reading.details else { return }
+        var samples = networkThroughputHistories[reading.resource] ?? []
+        samples.append(
+            NetworkThroughputSample(
+                timestamp: reading.timestamp,
+                receiveBytesPerSecond: details.receiveBytesPerSecond,
+                sendBytesPerSecond: details.sendBytesPerSecond
+            )
+        )
+        samples.removeAll { $0.timestamp < reading.timestamp - 60 }
+        networkThroughputHistories[reading.resource] = samples
     }
 
     private func ingest(_ reading: MetricReading, into scene: TerrainScene) {
