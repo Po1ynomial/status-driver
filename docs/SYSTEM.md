@@ -29,6 +29,7 @@
 
 ## Entry points
 
+- `README.md` is the repository front door: requirements, build and run commands, and the documentation map.
 - `Package.swift` defines the core library, application executable, and model-check executable.
 - `Sources/StatusDriver/StatusDriver.swift` selects live or synthetic mode and defines the window.
 - `Sources/StatusDriver/TelemetrySession.swift` loads hardware metadata, consumes fast and one-second streams, publishes sidebar histories and details, and owns selection state.
