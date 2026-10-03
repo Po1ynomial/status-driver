@@ -47,6 +47,7 @@ Match each hidden easter-egg utility to the characteristic terrain of its resour
 - Hidden and offscreen physics objects remain bounded.
 - No runtime failure silently changes resource, source mode, graph scale policy, or easter-egg state.
 - The app uses public unprivileged APIs where documented; GPU registry properties are an explicit current-Mac best-effort exception.
+- Building requires the Xcode developer directory and the macOS 27.0 SDK; a Command Line Tools-only selection cannot expand the SwiftUI `State` macro.
 
 ## Success conditions
 
@@ -98,3 +99,4 @@ Match each hidden easter-egg utility to the characteristic terrain of its resour
 - [Use best-effort IOKit GPU utilization](decisions/0017-gpu-performance.md)
 - [Dispatch one global easter-egg toggle by resource](decisions/0018-resource-easter-eggs.md)
 - [Match easter eggs to resource terrain](decisions/0019-terrain-specific-easter-eggs.md)
+- [Build with the Xcode developer toolchain](decisions/0020-build-with-the-xcode-toolchain.md)

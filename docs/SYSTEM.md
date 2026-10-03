@@ -78,6 +78,7 @@
 
 ## Inspection
 
+- Build with the Xcode developer directory selected. `xcode-select -p` must print `/Applications/Xcode.app/Contents/Developer`. The macOS 27 SDK implements SwiftUI `State` as an external macro, and the Xcode 27 Command Line Tools package ships no `libSwiftUIMacros.dylib`, so a Command Line Tools-only selection fails in `Sources/StatusDriver/TerrainView.swift` with `external macro implementation type 'SwiftUIMacros.StateMacro' could not be found for macro 'State()'; plugin for module 'SwiftUIMacros' not found`. Repair it with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`. Swift Package Manager replanned and rebuilt here without deleting `.build`, so a clean rebuild is only a fallback if the first retry still fails. See [0020](decisions/0020-build-with-the-xcode-toolchain.md).
 - Run `swift build` to compile every package target.
 - Run `swift run StatusDriverModelTests` to execute terrain, telemetry, detail, hardware, secondary stream, selection, cancellation, and live system checks.
 - Run `swift run StatusDriver`; inspect every resource row and compare values with `top`, `vm_stat`, `ioreg`, `iostat`, `netstat`, and `ifconfig` when useful.
@@ -101,6 +102,6 @@
 - Wi-Fi SSID, signal, channel, and PHY mode are intentionally absent. Some Ethernet-class physical ports remain visible as disconnected.
 - GPU registry keys are experimental and may disappear after a macOS update; the row then omits itself or remains unavailable if selected.
 - The interface has no process list, per-core graph, history controls, or persisted telemetry.
-- The package targets macOS 26 and has no bundle, signing, or distribution setup.
-- This Command Line Tools installation has neither a usable `Testing` module nor `XCTest`. Automated checks use a normal executable target rather than `swift test`.
+- The package declares a macOS 26.0 deployment minimum under `swift-tools-version: 6.3` and builds against the macOS 27.0 SDK with the Xcode 27 toolchain. It has no bundle, signing, or distribution setup.
+- Automated checks run as an executable target through `swift run StatusDriverModelTests` rather than `swift test`. Xcode 27 supplies both `Testing` and `XCTest`, so this is a packaging choice rather than a toolchain limitation.
 - SpriteKit may occasionally log `SKView: no drawables available for rendering. Skipping this frame.` A lone skipped-frame diagnostic is harmless when animation and input remain smooth.

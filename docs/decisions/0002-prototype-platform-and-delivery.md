@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-07
+- **Amended by:** Toolchain selection in [0020](0020-build-with-the-xcode-toolchain.md)
 
 ## Decision
 

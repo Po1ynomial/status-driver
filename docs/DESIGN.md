@@ -6,7 +6,7 @@ The application uses a native SwiftUI split view with one embedded SpriteKit gra
 
 SwiftUI owns the window, sidebar, selected resource, telemetry session, detail labels, statistics, composition bar, and hardware metadata. SpriteKit owns only the selected main graph, terrain collision, keyboard input, and optional vehicle.
 
-The application targets the owner's current macOS 26.2 machine. It may use convenient current APIs and makes no backward-compatibility claim.
+The application declares a macOS 26.0 deployment minimum and builds against the macOS 27.0 SDK with the Xcode 27 toolchain on the owner's macOS 27.0 machine. It may use convenient current APIs and makes no compatibility claim beyond that minimum.
 
 ## Performance layout
 
